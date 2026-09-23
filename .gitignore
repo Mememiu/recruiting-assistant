@@ -1,0 +1,24 @@
+# 本地候选人资料、运行记录和审查副本不纳入代码版本管理
+/01-jd/
+/02-sourcing/
+/03-interview/
+/04-offer/
+/05-onboarding/
+/CONTEXT.md
+/RUNTIME-NOTES.md
+/docs/
+/runtime/
+/reviews/
+/_shared/legacy/
+/pelican-ride.html
+/workbench/assets/
+
+# 凭证、缓存
+**/config.local.json
+.env
+.env.*
+!.env.example
+node_modules/
+.DS_Store
+*.log
+/.impeccable/review/

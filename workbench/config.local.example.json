@@ -1,0 +1,14 @@
+{
+  "ai": {
+    "apiKey": "",
+    "baseUrl": "",
+    "model": "",
+    "cheapModel": ""
+  },
+  "push": {
+    "sendKey": ""
+  },
+  "outreach": {
+    "minStars": null
+  }
+}

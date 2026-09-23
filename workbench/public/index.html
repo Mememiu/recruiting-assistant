@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>招聘工作台</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/inbox.css">
+<style>
+  body { font-family: var(--font-sans); background: var(--gray-50); color: var(--gray-800); margin: 0; }
+  .wrap { max-width: 1600px; margin: 0 auto; padding: 0 20px 60px; }
+  .tabs { display: flex; gap: 6px; margin: 20px 0 18px; border-bottom: 2px solid var(--gray-200); }
+  .tab { padding: 10px 18px; border: 0; background: transparent; cursor: pointer;
+         font-size: 14px; font-weight: 500; color: var(--gray-500);
+         border-bottom: 2px solid transparent; margin-bottom: -2px; }
+  .tab.active { color: var(--primary-600); border-bottom-color: var(--primary-500); }
+  .tab:hover { color: var(--gray-800); }
+  .view { display: none; } .view.active { display: block; animation: fadeIn .2s; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px; margin-bottom: 18px; }
+  .stat { background: #fff; border-radius: var(--radius-lg); padding: 16px 18px; box-shadow: var(--shadow-sm); }
+  .stat .n { font-size: 26px; font-weight: 600; color: var(--primary-600); line-height: 1.2; }
+  .stat .l { font-size: 12px; color: var(--gray-500); margin-top: 4px; }
+
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .toolbar select, .toolbar input { padding: 8px 12px; border: 1px solid var(--gray-300);
+    border-radius: var(--radius-md); font-size: 13px; background: #fff; }
+
+  .cols-toggle { position: relative; }
+  .cols-panel { position: absolute; top: 38px; left: 0; z-index: 30; background: #fff;
+    border: 1px solid var(--gray-200); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+    padding: 12px; min-width: 220px; display: none; }
+  .cols-panel.open { display: block; }
+  .cols-panel label { display: block; font-size: 13px; padding: 4px 0; cursor: pointer; color: var(--gray-700); }
+
+  .tablebox { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: var(--gray-100); color: var(--gray-600); font-weight: 500; text-align: left;
+       padding: 10px 12px; white-space: nowrap; position: sticky; top: 0; z-index: 2; }
+  td { padding: 8px 12px; border-top: 1px solid var(--gray-200); vertical-align: top; }
+  th:nth-child(-n+3), td:nth-child(-n+3) { position: sticky; background: #fff; }
+  th:nth-child(-n+3) { background: var(--gray-100); }
+  td:nth-child(2) { font-weight: 500; color: var(--gray-900); white-space: nowrap; }
+  tbody tr:hover td { background: var(--primary-50); }
+  td.editable { cursor: text; }
+  td.editable:hover { outline: 2px solid var(--primary-200); outline-offset: -2px; }
+  td input { width: 100%; border: 0; padding: 0; font: inherit; background: transparent; outline: none; }
+
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+  .t-ok { background: var(--success-light); color: var(--success-dark); }
+  .t-no { background: var(--danger-light); color: var(--danger-dark); }
+  .t-wait { background: var(--warning-light); color: var(--warning-dark); }
+  .t-gray { background: var(--gray-100); color: var(--gray-600); }
+  .t-pri { background: var(--primary-100); color: var(--primary-700); }
+
+  .note-cell { max-width: 340px; max-height: 60px; overflow: hidden; color: var(--gray-500); font-size: 12px; }
+  .star { color: var(--warning); letter-spacing: -1px; }
+
+  .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px,1fr)); gap: 16px; }
+  .chart-card { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 18px; }
+  .chart-card h3 { font-size: 14px; font-weight: 500; color: var(--gray-700); margin: 0 0 4px; }
+  .chart-card p { font-size: 12px; color: var(--gray-400); margin: 0 0 12px; }
+  .chart-box { height: 300px; }
+
+  .cand-layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; }
+  .cand-list { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; }
+  .cand-item { padding: 12px 16px; border-bottom: 1px solid var(--gray-200); cursor: pointer; }
+  .cand-item:hover { background: var(--primary-50); }
+  .cand-item.active { background: var(--primary-100); }
+  .cand-item .n { font-size: 14px; font-weight: 500; }
+  .cand-item .d { font-size: 12px; color: var(--gray-400); }
+  .md-body { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
+             padding: 26px 30px; line-height: 1.75; font-size: 14px; }
+  .md-body h1 { font-size: 20px; } .md-body h2 { font-size: 16px; margin-top: 22px; }
+  .md-body h3 { font-size: 14px; margin-top: 16px; color: var(--gray-600); }
+  .md-body table { margin: 10px 0; } .md-body td, .md-body th { padding: 6px 10px; border: 1px solid var(--gray-200); }
+  .md-body code { background: var(--gray-100); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .md-body blockquote { border-left: 3px solid var(--primary-300); margin: 10px 0; padding: 4px 14px; color: var(--gray-600); }
+  .empty { padding: 40px; text-align: center; color: var(--gray-400); }
+  .topbar { background: #fff; border-bottom: 1px solid var(--gray-200); }
+  .topbar .inner { max-width: 1600px; margin: 0 auto; padding: 14px 20px; display: flex; align-items: center; gap: 12px; }
+  .brand { font-size: 16px; font-weight: 600; color: var(--primary-600); }
+  .sub { font-size: 12px; color: var(--gray-400); }
+  .pill { margin-left: auto; font-size: 12px; background: var(--success-light);
+          color: var(--success-dark); padding: 4px 10px; border-radius: 999px; }
+  [hidden] { display: none !important; }
+
+  .fresh { background: var(--warning-light); color: var(--warning-dark); padding: 9px 14px;
+           border-radius: var(--radius-md); font-size: 12.5px; margin-top: 16px; }
+  .fresh.ok { background: var(--success-light); color: var(--success-dark); }
+  .usage-line { display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--gray-700); }
+  .usage-line b { color: var(--primary-600); font-size: 18px; }
+
+  .cand-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .cand-bar-name { font-size: 15px; font-weight: 500; }
+  .ai-box { margin-top: 14px; border-left: 3px solid var(--primary-500); }
+  .ai-box .ai-meta { font-size: 12px; color: var(--gray-400); margin-top: 14px;
+                     padding-top: 10px; border-top: 1px solid var(--gray-200); }
+
+  .tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px,1fr)); gap: 14px; margin-bottom: 18px; }
+  .task-card { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 18px; }
+  .task-card h3 { font-size: 15px; font-weight: 500; margin: 0 0 6px; }
+  .task-card p { font-size: 12.5px; color: var(--gray-500); line-height: 1.7; margin: 0 0 14px; }
+  .tform { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .tform input, .tform select { padding: 7px 10px; border: 1px solid var(--gray-300);
+    border-radius: var(--radius-md); font-size: 13px; background: #fff; }
+  .thint { font-size: 12px; color: var(--gray-400); margin-bottom: 12px; }
+  .runbox { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 16px; }
+  .run-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .run-actions { display: flex; gap: 8px; margin: 0 0 10px; }
+  .runlog { background: var(--gray-900); color: #a7f3d0; padding: 14px 16px; border-radius: var(--radius-md);
+            font-size: 12.5px; line-height: 1.7; max-height: 320px; overflow: auto;
+            white-space: pre-wrap; margin: 0; font-family: var(--font-mono); }
+  .modal-mask { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex;
+                align-items: center; justify-content: center; z-index: 100; }
+  .modal-card { background: #fff; border-radius: var(--radius-xl); box-shadow: var(--shadow-lg);
+                width: min(560px, 92vw); padding: 24px 26px; max-height: 88vh; overflow: auto; }
+  .modal-card h3 { font-size: 17px; font-weight: 500; margin: 0 0 8px; }
+  .mdesc { font-size: 13px; color: var(--gray-600); line-height: 1.7; margin: 0 0 14px; }
+  .mcmds { background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius-md);
+           padding: 12px 14px; font-family: var(--font-mono); font-size: 12px; color: var(--gray-700);
+           max-height: 170px; overflow: auto; }
+  .mcmds div { padding: 2px 0; }
+  .mfoot { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="inner">
+    <span class="brand">招聘工作台</span>
+    <span class="sub" id="dataHome"></span>
+    <span class="pill">仅本机可访问</span>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="fresh" id="freshBar" hidden></div>
+
+  <div class="tabs">
+    <button class="tab active" data-view="today">今日</button>
+    <button class="tab" data-view="inbox">未读待办 <span id="inboxCount"></span></button>
+    <button class="tab" data-view="ledger">台账</button>
+    <button class="tab" data-view="charts">图表</button>
+    <button class="tab" data-view="cand">候选人档案</button>
+    <button class="tab" data-view="task">任务</button>
+    <button class="tab" data-view="report">日报</button>
+  </div>
+
+  <!-- 今日 -->
+  <div class="view active" id="view-today">
+    <div class="inbox-entry">
+      <div><strong>先处理候选人的新消息</strong><p id="inboxEntrySummary">正在读取未读待办…</p></div>
+      <button class="btn btn-primary" id="openInbox">查看未读待办</button>
+    </div>
+    <div class="stats" id="todayStats"></div>
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h3>待你确认（面试顺口问）</h3><p>简历里看不出、只有人能问的事</p>
+        <div id="todayPending"></div>
+      </div>
+      <div class="chart-card">
+        <h3>AI 建议</h3><p>批量初筛结果 —— 采纳与否你点</p>
+        <div id="todayAi"></div>
+      </div>
+    </div>
+  </div>
+
+  <section class="view" id="view-inbox" aria-label="未读待办">
+    <div class="inbox-heading">
+      <div><h2>未读待办</h2><p>按岗位查看未读候选人、在线简历和沟通记录。</p></div>
+      <button class="btn btn-primary" id="inboxPull">拉取最新未读</button>
+    </div>
+    <p id="inboxNotice" role="status" aria-live="polite"></p>
+    <div id="inboxImportBar" class="inbox-import" hidden>
+      <span id="inboxImportHint"></span>
+      <button class="btn btn-outline-primary" id="inboxImport">整理这批未读并关联台账</button>
+    </div>
+    <div class="toolbar inbox-filters">
+      <label>应聘岗位 <select id="inboxRole"><option value="">全部岗位</option></select></label>
+      <label>处理进度 <select id="inboxFilter"><option value="pending">待处理</option><option value="all">全部</option><option value="done">已处理</option></select></label>
+      <label>查找 <input id="inboxSearch" type="search" placeholder="姓名、岗位或消息"></label>
+      <button class="btn btn-outline-primary" id="inboxRoleResumes" disabled>批量查看本岗简历</button>
+      <span id="inboxSummary"></span>
+    </div>
+    <div class="inbox-layout">
+      <div id="inboxList" class="inbox-list" aria-label="候选人未读列表"></div>
+      <div id="inboxDetail" class="inbox-detail" aria-live="polite"><p>选择一位候选人查看消息。</p></div>
+    </div>
+  </section>
+
+  <!-- 台账 -->
+  <div class="view" id="view-ledger">
+    <div class="stats" id="stats"></div>
+    <div class="toolbar">
+      <select id="fRole"><option value="">全部岗位</option></select>
+      <select id="fStatus"><option value="">全部状态</option></select>
+      <select id="fHard">
+        <option value="">全部硬门槛</option>
+        <option value="通过">硬门槛通过</option>
+        <option value="待核">待核</option>
+        <option value="不符">不符</option>
+      </select>
+      <input id="fSearch" placeholder="搜姓名 / 背景 / 备注…" style="min-width:200px">
+      <div class="cols-toggle">
+        <button class="btn btn-outline-secondary btn-sm" id="colsBtn">显示列</button>
+        <div class="cols-panel" id="colsPanel"></div>
+      </div>
+      <span class="sub" id="rowCount"></span>
+    </div>
+    <div class="tablebox"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+  </div>
+
+  <!-- 图表 -->
+  <div class="view" id="view-charts">
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h3>各岗位候选人数</h3><p>谁堆得最多、谁还没人投</p>
+        <div class="chart-box" id="cRole"></div>
+      </div>
+      <div class="chart-card">
+        <h3>当前状态分布</h3><p>漏斗现在卡在哪一段</p>
+        <div class="chart-box" id="cStatus"></div>
+      </div>
+      <div class="chart-card">
+        <h3>硬门槛结果</h3><p>通过 / 待核 / 不符（空＝未梳理的岗位）</p>
+        <div class="chart-box" id="cHard"></div>
+      </div>
+      <div class="chart-card">
+        <h3>归因原因</h3><p>为什么不要、为什么留下</p>
+        <div class="chart-box" id="cReason"></div>
+      </div>
+      <div class="chart-card">
+        <h3>来源分布</h3><p>主动寻源（搜索/推荐） vs 等投递（未读）</p>
+        <div class="chart-box" id="cSource"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 档案 -->
+  <div class="view" id="view-cand">
+    <div class="cand-layout">
+      <div class="cand-list" id="candList"></div>
+      <div>
+        <div class="cand-bar" id="candBar" hidden>
+          <span class="cand-bar-name" id="candName"></span>
+          <button class="btn btn-primary btn-sm" id="aiBtn">AI 初筛建议</button>
+          <span class="sub" id="aiHint"></span>
+        </div>
+        <div class="md-body" id="candBody"><div class="empty">从左边选一个候选人</div></div>
+        <div class="md-body ai-box" id="aiBox" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 任务 -->
+  <div class="view" id="view-task">
+    <div class="chart-card" style="margin-bottom:16px">
+      <h3>AI 用量</h3>
+      <p>每次调用都记一笔 —— 先跑一段时间看真实开销，再决定要不要给批量任务换便宜模型</p>
+      <div id="usageBody"></div>
+    </div>
+    <div class="alert alert-info">
+      拉取未读后可到「未读待办」继续处理。读取会话可能使 BOSS 消息变为已读，本地待办会保留。
+      打招呼任务会对外联系候选人，请核对预览名单后再执行。运行时可能弹出 Chrome 窗口。
+    </div>
+    <div id="taskList" class="tasks"></div>
+    <div class="runbox" id="runBox" hidden>
+      <div class="run-head">
+        <span id="runTitle" style="font-weight:500"></span>
+        <span class="sub" id="runProg"></span>
+      </div>
+      <div class="run-actions" id="runActions" hidden>
+        <button class="btn btn-outline-secondary btn-sm" id="runPause">暂停</button>
+        <button class="btn btn-outline-secondary btn-sm" id="runCancel">取消</button>
+      </div>
+      <pre class="runlog" id="runLog"></pre>
+    </div>
+  </div>
+
+  <!-- 日报 -->
+  <div class="view" id="view-report">
+    <div class="cand-layout">
+      <div class="cand-list" id="repList"></div>
+      <div class="md-body" id="repBody"><div class="empty">还没有日报 —— 去「任务」页点「生成今日日报」</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="modal" hidden>
+  <div class="modal-card">
+    <h3 id="mTitle"></h3>
+    <p class="mdesc" id="mDesc"></p>
+    <div class="mcmds" id="mCmds"></div>
+    <div class="mfoot">
+      <button class="btn btn-outline-secondary" id="mCancel">取消</button>
+      <button class="btn btn-primary" id="mGo">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/echarts.min.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

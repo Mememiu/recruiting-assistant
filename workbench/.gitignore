@@ -1,0 +1,7 @@
+# 密钥文件不进版本库
+config.local.json
+
+# 环境与缓存
+node_modules/
+.DS_Store
+*.log

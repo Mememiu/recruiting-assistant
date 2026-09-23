@@ -1,0 +1,21 @@
+{
+  "dataHome": "..",
+  "ledger": "02-sourcing/dedup-ledger.csv",
+  "interviewDir": "03-interview",
+  "backupDir": "runtime/raw",
+  "host": "127.0.0.1",
+  "port": 8771,
+  "_ai_note": "真正的 key 写在 config.local.json（已被 .gitignore 忽略）。这里只放不敏感的配置。",
+  "push": {
+    "_note": "Server酱推送（sct.ftqq.com），SendKey 写在 config.local.json 的 push.sendKey。免费每天 5 条，只在晨报场景推。"
+  },
+  "ai": {
+    "enabled": false,
+    "baseUrl": "",
+    "model": "",
+    "cheapModel": "",
+    "temperature": 0.2,
+    "reasoningEffort": "low",
+    "timeoutMs": 120000
+  }
+}
