@@ -168,7 +168,7 @@ test('local resume review uses only configured job rules and cites matching evid
     '## 三、初筛硬规则',
     '| 维度 | 规则 | 来源 |', '|---|---|---|',
     '| **年龄线** | **硬上限 30 岁** | 已确认 |',
-    '| 学历线 | 本科及以上 | 已确认 |',
+    '| 学历线 | 本科及以上在读 | 已确认 |',
     '| 毕业届别（岗位甲） | 2029 届 | 已确认 |',
     '## 四、在招岗位与优先级',
     '| 岗位 | 优先级 | 状态 | 对外 JD | 对内笔记 |', '|---|---|---|---|---|',
@@ -191,7 +191,12 @@ test('local resume review uses only configured job rules and cites matching evid
   assert.doesNotMatch(unconfigured, /用户研究：|本岗要求：2029 届/);
   assert.equal(hardgateVerdict({ role: '岗位甲', info: '29年应届生', dataHome: root }), '通过');
   assert.equal(hardgateVerdict({ role: '岗位甲', info: '28年应届生', dataHome: root }), '不符');
+  assert.equal(hardgateVerdict({ role: '岗位甲', info: '本科，已毕业', dataHome: root }), '不符');
+  assert.equal(hardgateVerdict({ role: '岗位甲', info: '29年应届生，往届生', dataHome: root }), '不符');
   assert.equal(hardgateVerdict({ role: '岗位乙', info: '29年应届生', dataHome: root }), '待核');
+  fs.writeFileSync(path.join(root, 'CONTEXT.md'), fs.readFileSync(path.join(root, 'CONTEXT.md'), 'utf8')
+    .replace('本科及以上在读', '本科及以上'));
+  assert.equal(hardgateVerdict({ role: '岗位甲', info: '本科，已毕业', dataHome: root }), '待核');
 });
 
 test('local review does not infer a threshold when the local standard omits one', () => {

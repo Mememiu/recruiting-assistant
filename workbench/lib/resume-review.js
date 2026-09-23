@@ -43,6 +43,11 @@ function graduationRule(context, role) {
 
 function hardgateVerdict({ role, info, dataHome }) {
   const { context } = readLocalStandards(dataHome, role);
+  const rules = tableRows(section(context, /^##\s*三、/));
+  const education = rules.find((row) => row[0] === '学历线')?.[1] || '';
+  if (/在读|在校|未毕业/.test(education) && /已毕业|往届生|非在校生|不在读/.test(String(info || ''))) {
+    return '不符';
+  }
   const required = graduationRule(context, role);
   const allowed = [...required.matchAll(/20\d{2}/g)].map((m) => Number(m[0]));
   const found = String(info || '').match(/(?:^|\D)((?:20)?\d{2})\s*(?:年应届生|届)/);
