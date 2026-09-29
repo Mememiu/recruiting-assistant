@@ -37,7 +37,7 @@ description: >
 
 3. **双入口寻源**（每个目标岗都跑），命令与坑见 channels.md：
    - 人才库 `boss search <词> --job <岗>` **与** 推荐 `boss recommend <岗>`。
-     （`boss positions` 当前读不出职位，别拿它拿岗位槽位——岗位名直接用 `CONTEXT.md` 里的。）
+     （平台开放状态可用 `boss positions` 核对；今天寻源的岗位与优先级仍以 `CONTEXT.md` 为准。）
    - 搜索词用 `_internal/<role>.md` 关键词迭代表里最新一轮的有效词。
    - **完成判据**：每个目标岗，boss 的 search + recommend 两个入口都跑过——漏一个入口 = 没做完。
      CONTEXT 里若已沉淀"某岗某入口无效"的结论，可按结论跳过并在日报注明。
