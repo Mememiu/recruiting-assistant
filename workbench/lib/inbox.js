@@ -104,8 +104,24 @@ class Inbox {
       try { preview = parseUnread(this.source(latest)).map((x) => ({ ...x, source: latest })); }
       catch (e) { warning = e.message; }
     }
-    return { source: state.source, latest, needsImport: !!latest && latest !== state.source && !warning,
-      warning, items: this.enrich(state.items), preview: this.enrich(preview) };
+    const needsImport = !!latest && latest !== state.source && !warning;
+    const clearToken = hash(JSON.stringify([state.source, latest,
+      state.items.map((i) => [i.id, i.signature]), preview.map((i) => [i.id, i.signature])]));
+    return { source: state.source, latest, needsImport, warning, clearToken,
+      canClear: !!state.items.length || needsImport,
+      items: this.enrich(state.items), preview: this.enrich(preview) };
+  }
+  clear(token) {
+    const current = this.list();
+    if (!token || token !== current.clearToken) throw new Error('待办已更新，请刷新后重新操作。');
+    if (!current.canClear) throw new Error('当前没有可清空的本地待办。');
+    const state = this.read();
+    const archive = new Map([...(state.archive || []), ...state.items].map((item) => [item.id, item]));
+    state.archive = [...archive.values()];
+    state.items = [];
+    if (current.needsImport) state.source = current.latest;
+    atomicJSON(this.file, state);
+    return { cleared: current.needsImport ? current.preview.length : current.items.length };
   }
   importSource(source) {
     const items = parseUnread(this.source(source)); // Validate before touching either file.
@@ -114,7 +130,7 @@ class Inbox {
     const required = ['序号', '姓名', '应聘岗位', '状态', '来源轮次', '备注'];
     if (required.some((h) => !header.includes(h))) throw new Error('台账缺少必要列，未导入。');
     const at = (r, col) => r[header.indexOf(col)] || '';
-    let nextId = Math.max(0, ...rows.map((r) => Number(at(r, '序号')) || 0));
+    let nextId = this.ledger.nextId(rows);
     let added = 0, linked = 0, unresolved = 0;
     for (const item of items) {
       const matches = rows.filter((r) => at(r, '姓名') === item.name && roleKey(at(r, '应聘岗位')) === roleKey(item.role));

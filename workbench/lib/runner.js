@@ -46,8 +46,8 @@ function childEnv() {
 function validate(cmd, task) {
   // 内部 AI 动作：不碰招聘平台，白名单不管它（它有自己的记录与确认）
   if (String(cmd).startsWith('ai:')) return { ok: true };
-  // 仅单人简历任务可调用这个固定的只读截图动作，绝不放开通用 action。
-  if ((task === 'inbox-resume' || task === 'inbox-resume-role') && cmd === 'boss action resume') return { ok: true };
+  // 仅未读沟通与简历任务可调用这个固定的只读截图动作，绝不放开通用 action。
+  if (['inbox-chat', 'inbox-resume', 'inbox-resume-role'].includes(task) && cmd === 'boss action resume') return { ok: true };
   const parts = String(cmd).trim().split(/\s+/);
   if (parts[0] !== 'boss') return { ok: false, why: '只允许 boss 命令' };
   const sub = (parts[1] || '').replace(/^-+/, '');
@@ -452,21 +452,16 @@ const TASKS = {
 
   'inbox-chat': {
     contextual: true,
-    label: '读取完整沟通',
-    desc: '打开这位候选人的 BOSS 会话，读取聊天和人才摘要。打开会话可能使平台消息变为已读；本地待办会保留到你记录处理结果。',
+    label: '读取沟通和在线简历',
+    desc: '打开这位候选人的 BOSS 会话，核对姓名和岗位后查看在线简历，保存完整沟通、简历原图与本地初筛线索。打开会话可能使平台消息变为已读；不会发送消息或改变筛选状态。',
     plan(ctx) {
       const item = ctx.inbox.chatTarget(ctx.opts.id, ctx.opts.signature);
-      return [`boss chat "${item.name}"`];
+      return [`boss chat "${item.name}"`, 'boss action resume'];
     },
     async execute(ctx, logs) {
       const item = ctx.inbox.chatTarget(ctx.opts.id, ctx.opts.signature);
-      const command = `boss chat "${item.name}"`;
       logs.push(`正在读取 ${item.name} · ${item.role}`);
-      const result = await runOne(command, 60000);
-      if (result.code !== 0) throw new Error(result.err || '读取失败，请检查 BOSS 登录状态。');
-      ctx.inbox.saveChat(item.id, item.signature, result.out);
-      logs.push('完整沟通已保存，回到待办可查看。');
-      return { ok: true };
+      return captureInboxResume(ctx, item, logs);
     },
   },
 

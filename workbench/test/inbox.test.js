@@ -77,6 +77,47 @@ test('latest unread replaces the visible queue while history survives empty pull
   assert.equal(inbox.list().items.length, 1);
 });
 
+test('clearing local unread archives current records without changing ledger or saved evidence', (t) => {
+  const { inbox, source, root, ledger } = setup(t);
+  inbox.importSource(source);
+  const item = inbox.read().items[0];
+  inbox.saveChat(item.id, item.signature, '姓名: 李同学\n沟通职位: 岗位甲\n完整聊天消息：你好');
+  inbox.followup(item.id, item.signature, '已在 BOSS 手动查看', false);
+  const ledgerBefore = fs.readFileSync(ledger.file);
+  const token = inbox.list().clearToken;
+  assert.deepEqual(inbox.clear(token), { cleared: 2 });
+  assert.equal(inbox.list().items.length, 0);
+  assert.equal(inbox.list().needsImport, false);
+  assert.equal(inbox.read().source, source);
+  assert.equal(inbox.read().archive.length, 2);
+  assert.match(inbox.read().archive.find((i) => i.id === item.id).chat.text, /完整聊天消息/);
+  assert.equal(inbox.read().archive.find((i) => i.id === item.id).history.length, 1);
+  assert.deepEqual(fs.readFileSync(ledger.file), ledgerBefore);
+  assert.throws(() => inbox.clear(token), /已更新/);
+  const next = '20260924-1111-boss-unread.txt';
+  fs.writeFileSync(path.join(root, 'runtime/raw', next), sample);
+  inbox.importSource(next);
+  assert.equal(inbox.read().items.length, 2);
+  assert.equal(inbox.read().items[0].history.length, 1);
+});
+
+test('clearing an unimported unread preview hides it without importing candidates', (t) => {
+  const { inbox, root, ledger } = setup(t);
+  const before = fs.readFileSync(ledger.file);
+  const listBefore = inbox.list();
+  assert.equal(listBefore.needsImport, true);
+  assert.equal(listBefore.preview.length, 2);
+  assert.deepEqual(inbox.clear(listBefore.clearToken), { cleared: 2 });
+  assert.equal(inbox.list().needsImport, false);
+  assert.equal(inbox.list().preview.length, 0);
+  assert.equal(inbox.read().items.length, 0);
+  assert.deepEqual(fs.readFileSync(ledger.file), before);
+  const next = '20260924-1111-boss-unread.txt';
+  fs.writeFileSync(path.join(root, 'runtime/raw', next), list(['1. 周同学｜岗位甲｜未读:1']));
+  assert.throws(() => inbox.clear(listBefore.clearToken), /已更新/);
+  assert.equal(inbox.list().preview.length, 1);
+});
+
 test('unknown output and malformed ledger cannot overwrite records; latest file handles legacy timestamps', (t) => {
   const { inbox, ledger, root, source } = setup(t);
   const bytes = fs.readFileSync(ledger.file);
@@ -141,9 +182,12 @@ test('resume evidence stays with the same person across pulls, review resets on 
   assert.equal(inbox.get(item.id).resume.file, 'second.png');
   assert.throws(() => inbox.saveResume(item.id, inbox.get(item.id).signature, '../ledger.csv', 'bad'), /路径无效/);
   assert.equal(runner.validate('boss action resume').ok, false);
+  assert.equal(runner.validate('boss action resume', 'inbox-chat').ok, true);
   assert.equal(runner.validate('boss action resume', 'inbox-resume').ok, true);
   assert.equal(runner.validate('boss action resume', 'inbox-resume-role').ok, true);
   assert.equal(runner.validate('boss action not-fit', 'inbox-resume').ok, false);
+  assert.deepEqual(runner.preview('inbox-chat', { inbox, dataHome: root, opts: { id: item.id, signature: inbox.get(item.id).signature } }).commands,
+    ['boss chat "李同学"', 'boss action resume']);
 });
 
 test('role resume preview contains only pending same-role candidates without saved resumes', (t) => {
@@ -226,6 +270,7 @@ test('runner pull integrates parsing and persistence; nonzero output never impor
   const ctx = { dataHome: root, inbox, opts: {} };
   const ticket = runner.preview('pull-unread', ctx);
   assert.equal(ticket.ok, true);
+  assert.deepEqual(ticket.commands, ['boss list --unread']);
   assert.equal((await runner.run(ticket.token, false)).ok, false);
   const result = await runner.run(ticket.token, true);
   assert.equal(result.ok, true); assert.equal(result.result.added, 1);

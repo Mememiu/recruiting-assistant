@@ -6,6 +6,7 @@
 <title>招聘工作台</title>
 <link rel="stylesheet" href="/css/style.css">
 <link rel="stylesheet" href="/css/inbox.css">
+<link rel="stylesheet" href="/css/ledger-cleanup.css">
 <style>
   body { font-family: var(--font-sans); background: var(--gray-50); color: var(--gray-800); margin: 0; }
   .wrap { max-width: 1600px; margin: 0 auto; padding: 0 20px 60px; }
@@ -169,7 +170,10 @@
   <section class="view" id="view-inbox" aria-label="未读待办">
     <div class="inbox-heading">
       <div><h2>未读待办</h2><p>按岗位查看未读候选人、在线简历和沟通记录。</p></div>
-      <button class="btn btn-primary" id="inboxPull">拉取最新未读</button>
+      <div class="inbox-heading-actions">
+        <button class="btn btn-outline-danger" id="inboxClear" disabled>清空本地待办</button>
+        <button class="btn btn-primary" id="inboxPull">拉取最新未读</button>
+      </div>
     </div>
     <p id="inboxNotice" role="status" aria-live="polite"></p>
     <div id="inboxImportBar" class="inbox-import" hidden>
@@ -206,8 +210,39 @@
         <button class="btn btn-outline-secondary btn-sm" id="colsBtn">显示列</button>
         <div class="cols-panel" id="colsPanel"></div>
       </div>
+      <button class="btn btn-outline-danger btn-sm" id="ledgerManageOpen">按条件清理</button>
       <span class="sub" id="rowCount"></span>
     </div>
+    <p id="ledgerNotice" class="ledger-notice" role="status" aria-live="polite" hidden></p>
+    <section id="ledgerManage" class="ledger-manage" aria-label="台账候选人清理" hidden>
+      <div class="ledger-manage-head">
+        <h3>清理台账候选人</h3>
+        <button class="btn btn-outline-secondary btn-sm" id="ledgerManageClose" aria-label="关闭清理面板" title="关闭">×</button>
+      </div>
+      <div class="ledger-criteria">
+        <label>岗位<select id="lcRole"><option value="">全部岗位</option></select></label>
+        <label>状态<select id="lcStatus"><option value="">全部状态</option></select></label>
+        <label>硬门槛<select id="lcHard"><option value="">全部</option><option value="通过">通过</option><option value="待核">待核</option><option value="不符">不符</option><option value="空">未填写</option></select></label>
+        <label>评级<select id="lcRating"><option value="">全部评级</option></select></label>
+        <label>来源<select id="lcSource"><option value="">全部来源</option><option value="未读">未读</option><option value="推荐">推荐</option><option value="搜索">搜索</option><option value="其他">其他</option></select></label>
+        <label>更新时间早于<input id="lcBefore" type="date"></label>
+        <label class="ledger-keyword">关键词<input id="lcKeyword" type="search" maxlength="120" placeholder="姓名、背景或备注"></label>
+      </div>
+      <div class="ledger-manage-actions">
+        <button class="btn btn-outline-primary" id="ledgerPreviewBtn">预览匹配人选</button>
+        <span id="ledgerManageNotice" role="status" aria-live="polite"></span>
+      </div>
+      <div id="ledgerPreviewBox" hidden>
+        <div class="ledger-result-head">
+          <label><input id="ledgerSelectAll" type="checkbox" checked> 全选匹配人选</label>
+          <span id="ledgerSelectedCount"></span>
+          <button class="btn btn-outline-danger" id="ledgerCommitBtn" disabled>清除已选</button>
+        </div>
+        <div id="ledgerMatches" class="ledger-matches" role="group" aria-label="待清除候选人"></div>
+      </div>
+      <div class="ledger-archive-head"><h4>清除记录</h4><button class="btn btn-outline-secondary btn-sm" id="ledgerArchiveRefresh">刷新</button></div>
+      <div id="ledgerArchives" class="ledger-archives"></div>
+    </section>
     <div class="tablebox"><table id="tbl"><thead></thead><tbody></tbody></table></div>
   </div>
 
@@ -295,6 +330,18 @@
     <div class="mfoot">
       <button class="btn btn-outline-secondary" id="mCancel">取消</button>
       <button class="btn btn-primary" id="mGo">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="ledgerConfirm" role="dialog" aria-modal="true" aria-labelledby="ledgerConfirmTitle" hidden>
+  <div class="modal-card">
+    <h3 id="ledgerConfirmTitle">确认清除候选人</h3>
+    <p class="mdesc" id="ledgerConfirmText"></p>
+    <div class="mcmds" id="ledgerConfirmNames"></div>
+    <div class="mfoot">
+      <button class="btn btn-outline-secondary" id="ledgerConfirmCancel">返回修改</button>
+      <button class="btn btn-outline-danger" id="ledgerConfirmGo">确认清除</button>
     </div>
   </div>
 </div>

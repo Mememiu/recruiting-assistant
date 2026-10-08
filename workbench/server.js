@@ -14,6 +14,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { Ledger } = require('./lib/ledger');
+const { LedgerCleanup } = require('./lib/ledger-cleanup');
 const { Inbox } = require('./lib/inbox');
 const runner = require('./lib/runner');
 const { screen: aiScreen } = require('./lib/ai');
@@ -41,6 +42,7 @@ if (cfg.ai && cfg.ai.apiKey) cfg.ai.enabled = true;
 
 const ledger = new Ledger(cfg);
 const inbox = new Inbox(cfg, ledger);
+const ledgerCleanup = new LedgerCleanup(ledger, inbox);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -125,11 +127,12 @@ const server = http.createServer((req, res) => {
       });
       return;
     }
-    if ((u === '/api/inbox/import' || u === '/api/inbox/followup') && req.method === 'POST') {
+    if ((u === '/api/inbox/import' || u === '/api/inbox/followup' || u === '/api/inbox/clear') && req.method === 'POST') {
       readBody(req, (body) => {
         try {
           if (runner.getState().running) throw new Error('有任务正在执行，结束后再保存。');
           const data = JSON.parse(body || '{}');
+          if (u === '/api/inbox/clear') return sendJSON(res, 200, { ok: true, ...inbox.clear(data.clearToken) });
           if (u === '/api/inbox/import') {
             if (!data.source || data.source !== inbox.latest()) throw new Error('抓取结果已更新，请刷新后整理最新一批。');
             return sendJSON(res, 200, { ok: true, ...inbox.importSource(data.source) });
@@ -150,6 +153,27 @@ const server = http.createServer((req, res) => {
     if (u === '/api/ledger') {
       try { return sendJSON(res, 200, { ok: true, ...ledger.read() }); }
       catch (e) { return sendJSON(res, 500, { ok: false, error: e.message }); }
+    }
+
+    if (u === '/api/ledger/removals' && req.method === 'GET') {
+      try { return sendJSON(res, 200, { ok: true, items: ledgerCleanup.archives() }); }
+      catch (e) { return sendJSON(res, 500, { ok: false, error: e.message }); }
+    }
+    if (['/api/ledger/removals/preview', '/api/ledger/removals/commit', '/api/ledger/removals/restore'].includes(u)
+        && req.method === 'POST') {
+      readBody(req, (body) => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (u === '/api/ledger/removals/preview') {
+            return sendJSON(res, 200, { ok: true, ...ledgerCleanup.preview(data.filters) });
+          }
+          if (runner.getState().running) throw new Error('有任务正在执行，结束后再修改台账。');
+          const result = u === '/api/ledger/removals/commit'
+            ? ledgerCleanup.commit(data.token, data.ids) : ledgerCleanup.restore(data.id);
+          return sendJSON(res, 200, { ok: true, ...result });
+        } catch (e) { return sendJSON(res, 400, { ok: false, error: e.message }); }
+      });
+      return;
     }
 
     if (u === '/api/stats') {

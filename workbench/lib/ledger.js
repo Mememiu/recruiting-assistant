@@ -127,6 +127,18 @@ class Ledger {
     return { changed: true, before, after: value, backup: backupTo };
   }
 
+  nextId(rows) {
+    let max = Math.max(0, ...rows.map((r) => Number(r[0]) || 0));
+    const dir = path.join(this.cfg.dataHome, 'runtime', 'ledger-removals');
+    if (!fs.existsSync(dir)) return max;
+    for (const name of fs.readdirSync(dir).filter((file) => /^[0-9a-f-]{36}\.json$/.test(file))) {
+      const record = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+      if (!Array.isArray(record.rows)) throw new Error('台账清除记录格式异常，已停止新增候选人。');
+      max = Math.max(max, ...record.rows.map((r) => Number(r[0]) || 0));
+    }
+    return max;
+  }
+
   /** 汇总统计，供图表用 */
   stats() {
     const { header, rows } = this.read();
