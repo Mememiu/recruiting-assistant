@@ -331,6 +331,150 @@ async function save(name, col, value, td) {
   $('#' + id).addEventListener('input', (e) => { FILTER[key] = e.target.value; render(); });
 });
 
+// ── 台账清理：条件预览后按稳定序号归档，可从清除记录恢复。
+let LEDGER_PREVIEW = null, LEDGER_SELECTED = [], LEDGER_PREVIEW_SEQ = 0;
+const ledgerFields = { role: 'lcRole', status: 'lcStatus', hard: 'lcHard', rating: 'lcRating',
+  source: 'lcSource', updatedBefore: 'lcBefore', keyword: 'lcKeyword' };
+
+function ledgerMessage(text, error = false) {
+  $('#ledgerManageNotice').textContent = text;
+  $('#ledgerManageNotice').className = error ? 'error' : '';
+}
+function ledgerNotice(text, error = false) {
+  const notice = $('#ledgerNotice');
+  notice.textContent = text; notice.className = 'ledger-notice' + (error ? ' error' : ''); notice.hidden = false;
+}
+function ledgerFilters() {
+  return Object.fromEntries(Object.entries(ledgerFields).map(([key, id]) => [key, $('#' + id).value.trim()]));
+}
+function fillLedgerSelect(id, values, allLabel) {
+  $('#' + id).innerHTML = `<option value="">${allLabel}</option>` + values.map((value) =>
+    `<option value="${esc(value)}">${esc(value)}</option>`).join('');
+}
+function resetLedgerPreview() {
+  LEDGER_PREVIEW_SEQ++;
+  LEDGER_PREVIEW = null;
+  LEDGER_SELECTED = [];
+  $('#ledgerPreviewBox').hidden = true;
+  $('#ledgerMatches').innerHTML = '';
+}
+function openLedgerManage() {
+  fillLedgerSelect('lcRole', [...new Set(ROWS.map((r) => r[HEADER.indexOf('应聘岗位')]).filter(Boolean))].sort(), '全部岗位');
+  fillLedgerSelect('lcStatus', [...new Set(ROWS.map((r) => r[HEADER.indexOf('状态')]).filter(Boolean))].sort(), '全部状态');
+  fillLedgerSelect('lcRating', ['空', ...new Set(ROWS.map((r) => r[HEADER.indexOf('评级')]).filter(Boolean))], '全部评级');
+  $('#lcRating').querySelector('option[value="空"]').textContent = '未评级';
+  $('#lcRole').value = FILTER.role;
+  $('#lcStatus').value = FILTER.status;
+  $('#lcHard').value = FILTER.hard;
+  $('#lcKeyword').value = FILTER.q;
+  $('#lcSource').value = '';
+  $('#lcBefore').value = '';
+  resetLedgerPreview();
+  ledgerMessage('');
+  $('#ledgerManage').hidden = false;
+  loadLedgerArchives();
+  $('#lcRole').focus();
+}
+async function loadLedgerArchives() {
+  try {
+    const data = await (await fetch('/api/ledger/removals')).json();
+    if (!data.ok) throw new Error(data.error);
+    $('#ledgerArchives').innerHTML = data.items.length ? data.items.map((item) =>
+      `<div class="ledger-archive-row"><span class="date">${esc(new Date(item.created).toLocaleString())}</span>
+        <span>${item.count} 人</span><span>${item.restored ? '已恢复' : '已清除'}</span>
+        ${item.restored ? '' : `<button class="btn btn-outline-primary btn-sm" data-restore-id="${esc(item.id)}">恢复这批</button>`}</div>`).join('')
+      : '<p class="empty">暂无清除记录。</p>';
+  } catch (e) { $('#ledgerArchives').textContent = '清除记录加载失败：' + e.message; }
+}
+function updateLedgerSelection() {
+  LEDGER_SELECTED = [...$('#ledgerMatches').querySelectorAll('input[data-ledger-id]:checked')].map((input) => input.dataset.ledgerId);
+  const total = LEDGER_PREVIEW?.items.length || 0;
+  const all = $('#ledgerSelectAll');
+  all.checked = !!total && LEDGER_SELECTED.length === total;
+  all.indeterminate = !!LEDGER_SELECTED.length && LEDGER_SELECTED.length < total;
+  $('#ledgerSelectedCount').textContent = `已选 ${LEDGER_SELECTED.length} / ${total} 人`;
+  $('#ledgerCommitBtn').disabled = !LEDGER_SELECTED.length;
+}
+$('#ledgerManageOpen').onclick = openLedgerManage;
+$('#ledgerManageClose').onclick = () => { $('#ledgerManage').hidden = true; resetLedgerPreview(); $('#ledgerManageOpen').focus(); };
+$('#ledgerArchiveRefresh').onclick = loadLedgerArchives;
+$('#ledgerManage').addEventListener('input', (event) => {
+  if (event.target.closest('.ledger-criteria')) { resetLedgerPreview(); ledgerMessage('条件已变化，请重新预览。'); }
+});
+$('#ledgerPreviewBtn').onclick = async () => {
+  resetLedgerPreview();
+  const sequence = LEDGER_PREVIEW_SEQ;
+  const button = $('#ledgerPreviewBtn'); button.disabled = true;
+  ledgerMessage('正在匹配台账…');
+  try {
+    const data = await (await fetch('/api/ledger/removals/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filters: ledgerFilters() }) })).json();
+    if (!data.ok) throw new Error(data.error);
+    if (sequence !== LEDGER_PREVIEW_SEQ) return;
+    LEDGER_PREVIEW = data;
+    ledgerMessage(`匹配 ${data.items.length} 人${data.blocked ? `；另有 ${data.blocked} 人仍在未读待办，已排除` : ''}。`);
+    if (!data.items.length) return;
+    $('#ledgerPreviewBox').hidden = false;
+    $('#ledgerMatches').innerHTML = data.items.map((item) =>
+      `<label class="ledger-match"><input type="checkbox" data-ledger-id="${esc(item.id)}" checked>
+        <strong>${esc(item.name)} <span class="muted">#${esc(item.id)}</span></strong>
+        <span>${esc(item.role)}</span><span class="muted">${esc(item.status)}</span>
+        <span class="muted">${esc(item.updated || '未记录日期')}</span></label>`).join('');
+    updateLedgerSelection();
+  } catch (e) { if (sequence === LEDGER_PREVIEW_SEQ) ledgerMessage(e.message, true); }
+  finally { button.disabled = false; }
+};
+$('#ledgerMatches').addEventListener('change', updateLedgerSelection);
+$('#ledgerSelectAll').onchange = (event) => {
+  $('#ledgerMatches').querySelectorAll('input[data-ledger-id]').forEach((input) => { input.checked = event.target.checked; });
+  updateLedgerSelection();
+};
+$('#ledgerCommitBtn').onclick = () => {
+  if (!LEDGER_PREVIEW || !LEDGER_SELECTED.length) return;
+  $('#ledgerConfirmText').textContent = `将从台账移除 ${LEDGER_SELECTED.length} 位候选人。台账会自动备份，清除记录可恢复；候选人档案与未读待办保持原样。`;
+  const chosen = new Set(LEDGER_SELECTED);
+  const names = LEDGER_PREVIEW.items.filter((item) => chosen.has(item.id)).map((item) => `${item.name} · ${item.role}`);
+  $('#ledgerConfirmNames').textContent = names.slice(0, 20).join('\n') + (names.length > 20 ? `\n其余 ${names.length - 20} 人` : '');
+  $('#ledgerConfirm').hidden = false;
+  $('#ledgerConfirmCancel').focus();
+};
+function closeLedgerConfirm() { $('#ledgerConfirm').hidden = true; $('#ledgerCommitBtn').focus(); }
+$('#ledgerConfirmCancel').onclick = closeLedgerConfirm;
+$('#ledgerConfirm').addEventListener('click', (event) => { if (event.target.id === 'ledgerConfirm') closeLedgerConfirm(); });
+$('#ledgerConfirmGo').onclick = async () => {
+  const button = $('#ledgerConfirmGo'); button.disabled = true;
+  try {
+    const data = await (await fetch('/api/ledger/removals/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: LEDGER_PREVIEW?.token, ids: LEDGER_SELECTED }) })).json();
+    if (!data.ok) throw new Error(data.error);
+    $('#ledgerConfirm').hidden = true;
+    resetLedgerPreview();
+    await load();
+    await loadLedgerArchives();
+    ledgerMessage(`已从台账清除 ${data.removed} 人，可在下方清除记录中恢复。`);
+    ledgerNotice(`已从台账清除 ${data.removed} 人。`);
+  } catch (e) { $('#ledgerConfirm').hidden = true; resetLedgerPreview(); ledgerMessage(e.message, true); }
+  finally { button.disabled = false; }
+};
+$('#ledgerArchives').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-restore-id]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const data = await (await fetch('/api/ledger/removals/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: button.dataset.restoreId }) })).json();
+    if (!data.ok) throw new Error(data.error);
+    resetLedgerPreview();
+    await load();
+    await loadLedgerArchives();
+    ledgerMessage(`已恢复 ${data.restored} 位候选人。`);
+    ledgerNotice(`已恢复 ${data.restored} 位候选人。`);
+  } catch (e) { ledgerMessage(e.message, true); button.disabled = false; }
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('#ledgerConfirm').hidden) closeLedgerConfirm();
+});
+
 // 点表头排序：第一次升序，再点降序，第三次恢复原序
 $('table thead').addEventListener('click', (e) => {
   const th = e.target.closest('th[data-sort]');
@@ -601,7 +745,7 @@ $('#mGo').addEventListener('click', async () => {
     await load();
     if (task === 'pull-unread' || task === 'inbox-chat' || task === 'inbox-resume' || task === 'inbox-resume-role') {
       showView('inbox');
-      inboxNotice(r.ok ? (task === 'pull-unread' ? '已整理最新未读，可按岗位查看候选人。' : task === 'inbox-resume' ? '在线简历已保存，可查看原图和线索。' : task === 'inbox-resume-role' ? '本岗简历查看已完成，请查看各人原图与线索；失败名单在任务日志中。' : '完整沟通已更新。')
+      inboxNotice(r.ok ? (task === 'pull-unread' ? '已整理最新未读，可按岗位查看候选人。' : task === 'inbox-resume' ? '在线简历已保存，可查看原图和线索。' : task === 'inbox-resume-role' ? '本岗简历查看已完成，请查看各人原图与线索；失败名单在任务日志中。' : '完整沟通和在线简历已更新。')
         : (r.error || '拉取未完成，请到任务页查看执行日志。'), !r.ok);
     } else if (!r.ok && !r.result?.cancelled) alert(r.error || '执行失败，请查看日志。');
   } catch (e) {
@@ -676,6 +820,7 @@ async function loadInbox() {
     const data = await (await fetch('/api/inbox')).json();
     if (!data.ok) throw new Error(data.error);
     INBOX = data;
+    $('#inboxClear').disabled = !data.canClear;
     $('#inboxImportBar').hidden = !data.needsImport;
     const source = data.latest || data.source || '';
     const day = source ? `${source.slice(0, 4)}-${source.slice(4, 6)}-${source.slice(6, 8)}` : '';
@@ -693,6 +838,7 @@ async function loadInbox() {
     inboxNotice(data.warning || (day ? `最近抓取：${day}。待办只显示本次未读，过往记录仍保存在本地。` : '还没有抓取记录，点击「拉取最新未读」开始。'), !!data.warning);
     renderInbox();
   } catch (e) {
+    $('#inboxClear').disabled = true;
     inboxNotice('未能加载待办：' + e.message + '。请刷新重试。', true);
     $('#inboxEntrySummary').textContent = '待办加载失败，请刷新重试。';
   }
@@ -736,7 +882,7 @@ function renderInboxDetail(item) {
     <h4>最新消息摘要</h4><p class="inbox-message">${esc(item.message || '本次列表没有返回消息摘要。')}</p>
     <h4>下一步</h4><p class="inbox-next">${esc(item.next)}</p>
     <div class="inbox-actions">
-      <button class="btn btn-primary" data-inbox-action="chat" ${disabled ? 'disabled' : ''}>${item.chat ? '更新完整沟通' : '读取完整沟通'}</button>
+      <button class="btn btn-primary" data-inbox-action="chat" ${disabled ? 'disabled' : ''}>${item.chat ? '更新沟通和在线简历' : '读取沟通和在线简历'}</button>
       <button class="btn btn-outline-primary" data-inbox-action="resume" ${disabled ? 'disabled' : ''}>${item.resume ? '重新查看在线简历' : '查看在线简历'}</button>
       ${c ? '<button class="btn btn-outline-primary" data-inbox-action="ledger">查看台账与筛选结果</button>' : ''}
       ${item.hasProfile ? '<button class="btn btn-outline-primary" data-inbox-action="profile">查看已有简历评估</button>' : ''}
@@ -762,6 +908,20 @@ function renderInboxDetail(item) {
 }
 $('#openInbox').onclick = () => showView('inbox');
 $('#inboxPull').onclick = () => askRun('pull-unread').catch((e) => inboxNotice(e.message, true));
+$('#inboxClear').onclick = async () => {
+  if (!INBOX.canClear) return;
+  const count = inboxItems().length;
+  if (!confirm(`清空全部岗位中 ${count} 位候选人的本地待办？\n\n沟通、简历和跟进记录会保存在本地历史；BOSS 站内未读不会改变。`)) return;
+  const button = $('#inboxClear'); button.disabled = true;
+  try {
+    const r = await (await fetch('/api/inbox/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clearToken: INBOX.clearToken }) })).json();
+    if (!r.ok) throw new Error(r.error);
+    INBOX_SELECTED = null;
+    await loadInbox();
+    inboxNotice(`已清空工作台待办（${r.cleared} 位）；BOSS 站内未读未改变。`);
+  } catch (e) { inboxNotice(e.message, true); button.disabled = !INBOX.canClear; }
+};
 $('#inboxFilter').onchange = renderInbox;
 $('#inboxRole').onchange = () => { INBOX_SAVED_ROLE = $('#inboxRole').value; try { localStorage.setItem('inbox-role', INBOX_SAVED_ROLE); } catch {} renderInbox(); };
 $('#inboxRoleResumes').onclick = () => askRun('inbox-resume-role', { role: $('#inboxRole').value }).catch((e) => inboxNotice(e.message, true));

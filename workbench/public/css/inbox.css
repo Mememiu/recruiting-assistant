@@ -3,6 +3,7 @@
 .inbox-entry p, .inbox-heading p { margin: 5px 0 0; color: var(--gray-600); font-size: 14px; }
 .inbox-heading h2 { margin: 0; font-size: 23px; font-weight: 600; }
 .inbox-heading { margin: 24px 0 20px; }
+.inbox-heading-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .inbox-import { background: var(--warning-light); padding: 14px 18px; border-radius: 12px; margin-bottom: 16px; color: var(--warning-dark); font-size: 14px; }
 #inboxNotice { font-size: 14px; color: var(--gray-700); overflow-wrap: anywhere; }
 #inboxNotice.error { color: var(--danger-dark); }
@@ -49,6 +50,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .inbox-layout { grid-template-columns: 1fr; gap: 16px; }
   .inbox-list { max-height: 310px; overflow-y: auto; }
   .inbox-entry, .inbox-heading, .inbox-import { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .inbox-heading-actions { width: 100%; }
   .inbox-detail { padding: 18px; }
   #inboxSummary { margin-left: 0; }
   .topbar .sub { display: none; }
