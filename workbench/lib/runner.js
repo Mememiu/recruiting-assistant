@@ -309,7 +309,11 @@ const TASKS = {
       logs.push(`共 ${targets.length} 人，间隔 3 秒，发出账号默认话术`);
       const { header, rows } = ctx.readLedger();
       const iName = header.indexOf('姓名'), iStatus = header.indexOf('状态');
+      const iRole = header.indexOf('应聘岗位');
       const iUpd = header.indexOf('更新时间');
+      // 台账去重键是「姓名+应聘岗位」：同一人可同时应聘多个岗位，只按姓名定位会更新错行
+      const findRow = (t) => rows.find((x) => x[iName] === t.name
+        && (iRole < 0 || String(x[iRole] || '').trim() === String(t.role || '').trim()));
       let ok = 0, fail = 0;
       for (let i = 0; i < targets.length; i++) {
         const t = targets[i];
@@ -327,12 +331,13 @@ const TASKS = {
         }
         if (r.code === 0 && !bad) {
           ok++;
-          const row = rows.find((x) => x[iName] === t.name);
-          if (row) { row[iStatus] = '已打招呼'; if (iUpd >= 0) row[iUpd] = new Date().toISOString().slice(0, 10); }
-          logs.push(`${t.name}（${t.stars}）：已打招呼`);
+          const row = findRow(t);
+          if (!row) logs.push(`⚠️ 台账里没定位到「${t.name}（${t.role}）」这一行，状态未改，请手动核对。`);
+          else { row[iStatus] = '已打招呼'; if (iUpd >= 0) row[iUpd] = new Date().toISOString().slice(0, 10); }
+          logs.push(`${t.name}（${t.role}，${t.stars}）：已打招呼`);
         } else {
           fail++;
-          logs.push(`${t.name}：失败 —— ${out.trim().slice(0, 80)}`);
+          logs.push(`${t.name}（${t.role}）：失败 —— ${out.trim().slice(0, 80)}`);
         }
         await sleep(3000);   // 文档：循环打太快撞列表刷新会偶发失败
       }
@@ -366,6 +371,9 @@ const TASKS = {
       const iStatus = header.indexOf('状态'), iRole = header.indexOf('应聘岗位');
       const iAi = header.indexOf('AI建议'), iName = header.indexOf('姓名');
       const iBg = header.indexOf('现职/背景'), iNote = header.indexOf('备注');
+      // 台账缺这些列时 indexOf 返回 -1，写入会静默丢失（写进数组的 -1 属性，CSV 序列化时消失）。
+      // 宁可报错让人加列，也不要假装修完。
+      if (iAi < 0) throw new Error('台账缺少「AI建议」列，请在表头补上（见 skills/recruit-daily/references/ledger-and-report.md）再跑。');
       const context = fs.readFileSync(path.join(ctx.dataHome, 'CONTEXT.md'), 'utf8');
 
       const targets = rows.filter((r) => r[iStatus] === '待初筛' && !r[iAi]
@@ -525,12 +533,15 @@ const TASKS = {
       const target = ctx.targetRole
         ? rows.filter((r) => !r[iHard] && r[iRole] === ctx.targetRole)
         : rows.filter((r) => !r[iHard]);
-      return target.map((r) => `boss chat "${r[1]}"`);
+      return target.map((r) => `boss chat "${r[header.indexOf('姓名')]}"`);
     },
     async execute(ctx, logs) {
       const { header, rows } = ctx.readLedger();
       const iHard = header.indexOf('硬门槛'), iRole = header.indexOf('应聘岗位');
-      const iNote = header.indexOf('备注');
+      const iNote = header.indexOf('备注'), iName = header.indexOf('姓名');
+      // 缺列时 indexOf = -1：verdict 会写进数组的 -1 属性，CSV 序列化时静默消失。
+      // 必须在这里挡住，否则跑完看起来成功、台账里一条记录都没有。
+      if (iHard < 0) throw new Error('台账缺少「硬门槛」列，请在表头补上（见 skills/recruit-daily/references/ledger-and-report.md）再跑。');
       const targets = ctx.targetRole
         ? rows.filter((r) => !r[iHard] && r[iRole] === ctx.targetRole)
         : rows.filter((r) => !r[iHard]);
@@ -539,7 +550,7 @@ const TASKS = {
       let filled = 0, failed = 0;
       for (let i = 0; i < targets.length; i++) {
         const row = targets[i];
-        const name = row[1];
+        const name = row[iName];
         STATE.current = i + 1;
         STATE.total = targets.length;
         const r = await runOne(`boss chat "${name}"`, 45000);

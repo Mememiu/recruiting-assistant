@@ -27,7 +27,6 @@
 | 新开一个岗位 / 重新梳理某岗位的真实要求 | `skills/recruit-grill/SKILL.md` |
 | 重建 / 修复工作区结构 | `skills/recruit-init/SKILL.md` |
 | boss 直聘 CLI 命令细节 | `skills/recruit-daily/references/channels.md` + `boss help` |
-| BOSS CLI 命令细节 | `skills/recruit-daily/references/channels.md` + `boss help` |
 
 ## 会话卫生（跨会话记忆只有文件）
 

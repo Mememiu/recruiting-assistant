@@ -28,6 +28,19 @@
 
 建议搭配ai工具：codex、workbuddy等生成本地工作台，部署云端容易失效
 
+## 支持平台
+
+| 组件 | macOS | Windows | Linux |
+|---|---|---|---|
+| skills 流程（agent 直接执行 boss/lark-cli 命令） | ✅ | ✅ | ✅ |
+| 工作台（Web UI） | ✅ | ✅（`start.bat` 双击启动） | ✅ |
+| 工作台晨报（morning.js） | ✅ | ✅ | 无通知（仅日志） |
+| 在线简历 OCR（工作台内） | ✅（swift） | ⚠️ 无 swift，只存原图人工看 | ⚠️ 同上 |
+
+**Windows 注意**：`boss-cli` 在 Windows 上是 `boss.cmd`，工作台已通过 `cmd /c` 适配；npm 全局目录请确认在 PATH 中（通常 `%APPDATA%\npm`）。BOSS 平台的反检测在 Windows + 无头 Chrome 下的表现**未经实测**，首次使用务必先跑一次 `boss login` + `boss list --unread` 验证（依据：Boss 曾有账号因无头被限 24 小时，见 `skills/recruit-daily/references/channels.md`）。
+
+**换环境/换平台后**，先跑 `node workbench/doctor.js`（5 秒只读诊断）：它会检查 PATH 里能否找到 boss、工作台的调用方式能否跑起来、`boss version` 是否正常，任一步失败都给出具体修法。
+
 正在完善功能：话术库：实现候选人回聊、追聊，要简历——简历入库。
 
 PS：需要接入ai api方可运作工作台，不需要工作台形式可以借助安装了的ai工具一步步执行。

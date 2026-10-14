@@ -47,8 +47,8 @@ description: >
 │   ├── dedup-ledger.csv      ← 从 templates/dedup-ledger.csv 复制（只有表头）
 │   └── candidate-pool.md     ← 从 templates/candidate-pool.md 复制
 ├── 03-interview/
-├── 04-offer/
-├── 05-onboarding/
+├── 04-offer/                ← offer 材料逐案放（不随本流程自动化，等你明确指令）
+├── 05-onboarding/           ← 入职材料逐案放（同上）
 ├── _shared/templates/        ← 复制 jd-internal.md / interview-record.md /
 │                                candidate-pool.md / dedup-ledger.csv 四个模板
 └── runtime/

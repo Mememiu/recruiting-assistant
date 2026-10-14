@@ -35,15 +35,30 @@ function readLocalStandards(dataHome, role) {
   return { context, notes };
 }
 
+/**
+ * 读 CONTEXT 第三节的硬规则。
+ * 表格（`| 年龄线 | 硬上限 35 岁 |`）是规范写法；但早期工作区/手填的 CONTEXT 常写成
+ * `- 年龄线：硬上限 35 岁` 这种 bullet。两种都认，避免老工作区静默失去本地筛选能力。
+ */
+function ruleRows(markdown, heading) {
+  const text = section(markdown, heading);
+  const rows = tableRows(text);
+  if (rows.length) return rows;
+  const bullets = String(text).split('\n')
+    .map((line) => line.match(/^\s*[-*]\s*([^：:]+)[：:]\s*(.+)$/))
+    .filter(Boolean).map((m) => [m[1].replace(/\*\*/g, '').trim(), m[2].trim()]);
+  return bullets;
+}
+
 function graduationRule(context, role) {
-  return tableRows(section(context, /^##\s*三、/))
+  return ruleRows(context, /^##\s*三、/)
     .find((row) => /^毕业届别[（(]/.test(row[0]) &&
       String(role || '').includes(row[0].replace(/^毕业届别[（(]/, '').replace(/[）)]$/, '')))?.[1] || '';
 }
 
 function hardgateVerdict({ role, info, dataHome }) {
   const { context } = readLocalStandards(dataHome, role);
-  const rules = tableRows(section(context, /^##\s*三、/));
+  const rules = ruleRows(context, /^##\s*三、/);
   const education = rules.find((row) => row[0] === '学历线')?.[1] || '';
   if (/在读|在校|未毕业/.test(education) && /已毕业|往届生|非在校生|不在读/.test(String(info || ''))) {
     return '不符';
@@ -57,11 +72,11 @@ function hardgateVerdict({ role, info, dataHome }) {
 }
 
 function reviewResume({ role, resume, conversation, dataHome }) {
-  const lines = String(resume || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-  const chat = String(conversation || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  const lines = String(resume || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  const chat = String(conversation || '').split('\n').map((s) => s.trim()).filter(Boolean);
   const find = (pattern, source = lines) => source.find((line) => pattern.test(line));
   const { context, notes } = readLocalStandards(dataHome, role);
-  const rules = tableRows(section(context, /^##\s*三、/));
+  const rules = ruleRows(context, /^##\s*三、/);
   const rule = (dimension) => rules.find((row) => dimension.test(row[0]))?.[1] || '';
   const ageRule = rule(/^年龄线$/);
   const degreeRule = rule(/^学历线$/);

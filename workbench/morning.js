@@ -13,8 +13,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const { Ledger, toCSV } = require('./lib/ledger');
+const { Inbox } = require('./lib/inbox');
 const runner = require('./lib/runner');
 const report = require('./lib/report');
 
@@ -28,10 +29,13 @@ if (fs.existsSync(lp)) {
 if (cfg.ai && cfg.ai.apiKey) cfg.ai.enabled = true;
 
 const ledger = new Ledger(cfg);
+const inbox = new Inbox(cfg, ledger);
 const ctx = {
   dataHome: cfg.dataHome,
   targetRole: '',
   opts: {},
+  // pull-unread 内部要调 ctx.inbox.importSource —— 少了它晨报必崩（实测过）
+  inbox,
   readLedger: () => ledger.read(),
   stats: () => ledger.stats(),
   writeLedger: (header, rows) => {
@@ -40,10 +44,19 @@ const ctx = {
   },
 };
 
+/** 系统通知：macOS 用 osascript，Windows 用 powershell toast；都不行就只打日志，不静默 */
 function notify(msg) {
   try {
-    execSync(`osascript -e 'display notification "${msg}" with title "招聘工作台"'`);
-  } catch { /* 通知失败无所谓 */ }
+    if (process.platform === 'darwin') {
+      execFileSync('osascript', ['-e', `display notification "${String(msg).replace(/"/g, '\\"')}" with title "招聘工作台"`]);
+    } else if (process.platform === 'win32') {
+      const ps = `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; `
+        + `$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText01); `
+        + `$t.GetElementsByTagName('text').Item(0).AppendChild($t.CreateTextNode('${String(msg).replace(/'/g, "''")}')) > $null; `
+        + `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('招聘工作台').Show([Windows.UI.Notifications.ToastNotification]::new($t));`;
+      execFileSync('powershell', ['-NoProfile', '-Command', ps], { stdio: 'ignore' });
+    }
+  } catch { /* 通知失败无所谓，日志已打印 */ }
 }
 
 (async () => {

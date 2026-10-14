@@ -53,6 +53,9 @@ description: >
 
 6. **补台账** `02-sourcing/dedup-ledger.csv`（去重键 = 姓名+应聘岗位）。格式见 ledger-and-report.md。台账是**唯一事实源**。
    - **完成判据**：本轮接触过的每个候选人在台账里有且仅有一行；无重复序号；按岗位计数与本轮处理人数对得上。
+   - **顺带同步候选人池** `02-sourcing/candidate-pool.md`：把台账里状态推进到「初筛通过」及以上的人，按岗位写进
+     candidate-pool 对应小节（姓名｜背景｜薪资/年限｜学历｜一句话｜状态｜简历链接）。这个文件是给人看的
+     shortlist 视图，不是事实源——**从台账生成，别手改**；没有新推进的人就跳过这步。
 
 7. **出日报**：写本地 `runtime/reports/YYYY-MM-DD.md`（结构见 ledger-and-report.md）。内容**从台账同步**，不另立事实源。
    - （可选）想发飞书云文档/IM 卡片，读 `optional/lark-integration.md`；没配 lark-cli 就跳过，本地日报不受影响。
