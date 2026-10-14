@@ -18,6 +18,7 @@
 
 | 场景 | 读 |
 |---|---|
+| 每天开工第一站 / 今天该干什么 / 不确定下一步 | `skills/recruit-today/SKILL.md`（只读驾驶舱，输出决策卡） |
 | 不确定该走哪个流程 / 用户问"这套工具怎么用" | `skills/ask-guide/SKILL.md` |
 | 每日招聘：查未读 / 主动寻源 / 初筛 / 打招呼 / 补台账 / 出日报 | `skills/recruit-daily/SKILL.md` |
 | 深度盘点某岗市场人才：供给/薪资对标/目标公司有谁/好不好招 | `skills/market-talent-mapping/SKILL.md` |
@@ -26,7 +27,6 @@
 | 新开一个岗位 / 重新梳理某岗位的真实要求 | `skills/recruit-grill/SKILL.md` |
 | 重建 / 修复工作区结构 | `skills/recruit-init/SKILL.md` |
 | boss 直聘 CLI 命令细节 | `skills/recruit-daily/references/channels.md` + `boss help` |
-| BOSS CLI 命令细节 | `skills/recruit-daily/references/channels.md` + `boss help` |
 
 ## 会话卫生（跨会话记忆只有文件）
 
@@ -45,7 +45,7 @@
 ## 产物落点（本地为唯一事实源）
 
 - **唯一事实源 = 本地文件**：`02-sourcing/dedup-ledger.csv`（全量候选人+状态）、`02-sourcing/candidate-pool.md`（shortlist 视图）、`03-interview/<姓名>.md`（面试档案）。
-- 飞书云文档 / 多维表格等 = **对外视图与通知**，从本地台账同步生成，不作为事实源。
+- 对外视图（如飞书云文档，可选）= **通知与分享**，从本地台账同步生成，不作为事实源。不用飞书时此条不适用，见 `optional/lark-integration.md`。
 - `runtime/reports/` 与临时日志可删可重建；邮件附件和导入索引落 `runtime/resumes/`，会被台账路径与跨轮去重引用，需随台账一起保留和备份。
 - `runtime/inbox.json` 保存未读待办、完整沟通和跟进历史，不是可丢弃缓存，需随台账一起备份。未读整理按姓名＋岗位关联，保留已有状态；台账单元格写入按唯一序号定位，同名歧义不能默认选第一人。
 

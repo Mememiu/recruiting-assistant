@@ -20,6 +20,7 @@ const runner = require('./lib/runner');
 const { screen: aiScreen } = require('./lib/ai');
 const { reviewResume } = require('./lib/resume-review');
 const report = require('./lib/report');
+const todayScan = require('./lib/today-scan');
 const { cleanupOrphanScreenshots } = require('./lib/storage');
 
 const ROOT = __dirname;
@@ -81,6 +82,31 @@ function readBody(req, cb) {
   req.on('end', () => cb(body));
 }
 
+/**
+ * 本机服务没有认证，任何网页都能 fetch 到 127.0.0.1:8771。
+ * 一个 text/plain 的 POST 不会触发 CORS 预检，所以必须自己挡：
+ * 要求请求带自定义头（浏览器跨源 fetch 会自动触发预检，挡在门外），
+ * 或 Origin 就是本机自己。
+ */
+const API_TOKEN_HEADER = 'x-recruit-token';
+function allowMutation(req) {
+  if (req.headers[API_TOKEN_HEADER]) return true;
+  const origin = req.headers.origin;
+  if (!origin) return true;                       // curl / 本机脚本不带 Origin，放行
+  try {
+    const u = new URL(origin);
+    return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === cfg.host;
+  } catch { return false; }
+}
+
+/** 档案/日报读取：name 只当纯文件名，杜绝 ../ 穿越出数据目录 */
+function safeFileIn(dirRel, name) {
+  const dir = path.resolve(cfg.dataHome, dirRel);
+  const file = path.resolve(dir, String(name || '') + '.md');
+  if (!file.startsWith(dir + path.sep)) return null;   // 越界（含 ../）
+  return file;
+}
+
 /** 读 03-interview 下的候选人档案 */
 function listCandidates() {
   const dir = path.join(cfg.dataHome, cfg.interviewDir);
@@ -113,6 +139,7 @@ const server = http.createServer((req, res) => {
       } catch (e) { return sendJSON(res, 404, { ok: false, error: e.message }); }
     }
     if (u === '/api/inbox/resume/review' && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
       readBody(req, async (body) => {
         try {
           if (runner.getState().running) throw new Error('有任务正在执行，请稍后评估。');
@@ -128,6 +155,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     if ((u === '/api/inbox/import' || u === '/api/inbox/followup' || u === '/api/inbox/clear') && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
       readBody(req, (body) => {
         try {
           if (runner.getState().running) throw new Error('有任务正在执行，结束后再保存。');
@@ -161,6 +189,7 @@ const server = http.createServer((req, res) => {
     }
     if (['/api/ledger/removals/preview', '/api/ledger/removals/commit', '/api/ledger/removals/restore'].includes(u)
         && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
       readBody(req, (body) => {
         try {
           const data = JSON.parse(body || '{}');
@@ -187,14 +216,15 @@ const server = http.createServer((req, res) => {
 
     if (u.startsWith('/api/candidate?')) {
       const name = decodeURIComponent(new URL(u, 'http://x').searchParams.get('name') || '');
-      const file = path.join(cfg.dataHome, cfg.interviewDir, name + '.md');
-      if (!name || !fs.existsSync(file)) {
+      const file = safeFileIn(cfg.interviewDir, name);
+      if (!file || !fs.existsSync(file)) {
         return sendJSON(res, 404, { ok: false, error: '档案不存在' });
       }
       return sendJSON(res, 200, { ok: true, name, content: fs.readFileSync(file, 'utf8') });
     }
 
     if (u === '/api/ledger/cell' && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
       readBody(req, (body) => {
         try {
           const { name, col, value, id } = JSON.parse(body || '{}');
@@ -213,6 +243,7 @@ const server = http.createServer((req, res) => {
      * targetRole 为空 = 全岗；否则只筛该岗位
      */
     if (u === '/api/task/preview' && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
       readBody(req, (body) => {
         try {
           const { task, targetRole, opts } = JSON.parse(body || '{}');
@@ -236,6 +267,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (u === '/api/task/run' && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
       readBody(req, async (body) => {
         try {
           const { token, confirm } = JSON.parse(body || '{}');
@@ -250,6 +282,7 @@ const server = http.createServer((req, res) => {
       return sendJSON(res, 200, { ok: true, ...s });
     }
     if (u === '/api/task/control' && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
       readBody(req, (body) => {
         try {
           const { action } = JSON.parse(body || '{}');
@@ -265,12 +298,13 @@ const server = http.createServer((req, res) => {
      * 每次调用要花钱，所以前端会把 token 消耗显示出来。
      */
     if (u === '/api/ai/screen' && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
       readBody(req, async (body) => {
         try {
           const { name } = JSON.parse(body || '{}');
           if (!name) throw new Error('缺少姓名');
-          const file = path.join(cfg.dataHome, cfg.interviewDir, String(name) + '.md');
-          if (!fs.existsSync(file)) return sendJSON(res, 404, { ok: false, error: '还没有这个人的档案' });
+          const file = safeFileIn(cfg.interviewDir, name);
+          if (!file || !fs.existsSync(file)) return sendJSON(res, 404, { ok: false, error: '还没有这个人的档案' });
           const person = fs.readFileSync(file, 'utf8');
           const context = fs.readFileSync(path.join(cfg.dataHome, 'CONTEXT.md'), 'utf8');
           const r = await aiScreen({ context, person });
@@ -300,6 +334,14 @@ const server = http.createServer((req, res) => {
       return sendJSON(res, 200, { ok: true, ...out });
     }
 
+    /** 今日驾驶舱：只读状态扫描（与 recruit-today skill 共用同一份实现） */
+    if (u === '/api/today') {
+      try {
+        const s = todayScan.scan(cfg.dataHome, cfg.ledger);
+        return sendJSON(res, 200, { ok: true, ...s });
+      } catch (e) { return sendJSON(res, 500, { ok: false, error: e.message }); }
+    }
+
     /** 数据新鲜度：台账里的数据是几点抓的 */
     if (u === '/api/freshness') {
       const dir = path.join(cfg.dataHome, 'runtime', 'raw');
@@ -322,8 +364,8 @@ const server = http.createServer((req, res) => {
     }
     if (u.startsWith('/api/report/read?')) {
       const name = decodeURIComponent(new URL(u, 'http://x').searchParams.get('name') || '');
-      const file = path.join(cfg.dataHome, 'runtime', 'reports', name + '.md');
-      if (!name || !fs.existsSync(file)) return sendJSON(res, 404, { ok: false, error: '没有这份日报' });
+      const file = safeFileIn(path.join('runtime', 'reports'), name);
+      if (!file || !fs.existsSync(file)) return sendJSON(res, 404, { ok: false, error: '没有这份日报' });
       return sendJSON(res, 200, { ok: true, name, content: fs.readFileSync(file, 'utf8') });
     }
 
