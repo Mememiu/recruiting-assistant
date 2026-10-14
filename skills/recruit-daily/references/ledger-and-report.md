@@ -26,11 +26,7 @@
 
 ## 日报（从台账同步，不另立事实源）
 
-**载体二选一，结构相同：**
-- 有 `lark-cli` 且已配置 → 飞书云文档：把内容写成文件落在 cwd 相对路径，
-  `lark-cli docs +create --content @<相对路径> --as user`（`@file` 只认 cwd 相对路径；
-  超长内容内联易触发限制，走文件）。建完把文档 URL 回给用户。
-- 没有 → 本地 `runtime/reports/YYYY-MM-DD.md`，写完把路径回给用户。
+**载体：本地 markdown 文件，写完把路径回给用户。**（可选）要发飞书云文档，读 `optional/lark-integration.md` 第 2 节。
 
 **结构建议（非死模板）：**
 
