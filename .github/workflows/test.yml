@@ -1,0 +1,32 @@
+# CI：跑工作台测试（跨平台：ubuntu / macos / windows）
+# 覆盖三类回归：台账列集、greet 行定位、晨报 ctx、跨平台 spawn
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Windows 上 shell 是 pwsh，需用 ; 连接命令
+      - name: Run workbench tests
+        shell: bash
+        run: node --test workbench/test/*.test.js
+      - name: Syntax-check all sources
+        shell: bash
+        run: |
+          for f in workbench/server.js workbench/morning.js workbench/lib/*.js; do
+            node --check "$f" || exit 1
+          done
+          echo "all sources parse OK"

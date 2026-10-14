@@ -17,6 +17,8 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
+const IS_WIN = process.platform === 'win32';
+
 // ── 白名单：只允许这些
 const ALLOWED_SUBCOMMANDS = ['list', 'chat', 'recommend', 'search', 'greet', 'help', 'version', 'shutdown'];
 
@@ -39,8 +41,33 @@ let batchControl = null;
 /** 让子进程一定能找到 boss（~/.local/bin 不一定在当前 PATH 里） */
 function childEnv() {
   const home = os.homedir();
-  const extra = [path.join(home, '.local', 'bin'), '/usr/local/bin', '/usr/bin', '/bin'];
-  return { ...process.env, PATH: [...new Set([...(process.env.PATH || '').split(':'), ...extra])].join(':') };
+  const sep = path.delimiter;                       // Windows 是 ';'，POSIX 是 ':'
+  const extra = IS_WIN
+    ? [path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm'),
+       path.join(home, '.local', 'bin')]
+    : [path.join(home, '.local', 'bin'), '/usr/local/bin', '/usr/bin', '/bin'];
+  return { ...process.env, PATH: [...new Set([...(process.env.PATH || '').split(sep), ...extra])].join(sep) };
+}
+
+/**
+ * 跨平台执行 boss。
+ * Windows 上 npm 全局装出来的是 boss.cmd，Node 无 shell 直接 spawn 会 EINVAL
+ * （Node 18.20.2+ 起的修复：不再把 .cmd/.bat 直接交给 CreateProcess），
+ * 所以 Windows 走 cmd /c；POSIX 维持原样。
+ */
+function runOne(cmd, timeoutMs = 60000) {
+  return new Promise((resolve) => {
+    const parts = splitCmd(cmd);
+    const bin = IS_WIN ? 'cmd' : parts[0];
+    const args = IS_WIN ? ['/d', '/s', '/c', parts[0], ...parts.slice(1)] : parts.slice(1);
+    const p = spawn(bin, args, { env: childEnv(), shell: false });
+    let out = '', err = '';
+    const t = setTimeout(() => { try { p.kill(); } catch {} resolve({ out, err: err + '\n[超时]', code: -1 }); }, timeoutMs);
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('close', (code) => { clearTimeout(t); resolve({ out, err, code }); });
+    p.on('error', (e) => { clearTimeout(t); resolve({ out, err: String(e.message || e), code: -1 }); });
+  });
 }
 
 function validate(cmd, task) {
@@ -73,19 +100,6 @@ function splitCmd(s) {
   }
   if (cur) out.push(cur);
   return out;
-}
-
-function runOne(cmd, timeoutMs = 60000) {
-  return new Promise((resolve) => {
-    const parts = splitCmd(cmd);
-    const p = spawn(parts[0], parts.slice(1), { env: childEnv(), shell: false });
-    let out = '', err = '';
-    const t = setTimeout(() => { try { p.kill(); } catch {} resolve({ out, err: err + '\n[超时]', code: -1 }); }, timeoutMs);
-    p.stdout.on('data', (d) => { out += d; });
-    p.stderr.on('data', (d) => { err += d; });
-    p.on('close', (code) => { clearTimeout(t); resolve({ out, err, code }); });
-    p.on('error', (e) => { clearTimeout(t); resolve({ out, err: String(e.message || e), code: -1 }); });
-  });
 }
 
 function recognizeResume(file) {
@@ -295,7 +309,11 @@ const TASKS = {
       logs.push(`共 ${targets.length} 人，间隔 3 秒，发出账号默认话术`);
       const { header, rows } = ctx.readLedger();
       const iName = header.indexOf('姓名'), iStatus = header.indexOf('状态');
+      const iRole = header.indexOf('应聘岗位');
       const iUpd = header.indexOf('更新时间');
+      // 台账去重键是「姓名+应聘岗位」：同一人可同时应聘多个岗位，只按姓名定位会更新错行
+      const findRow = (t) => rows.find((x) => x[iName] === t.name
+        && (iRole < 0 || String(x[iRole] || '').trim() === String(t.role || '').trim()));
       let ok = 0, fail = 0;
       for (let i = 0; i < targets.length; i++) {
         const t = targets[i];
@@ -313,12 +331,13 @@ const TASKS = {
         }
         if (r.code === 0 && !bad) {
           ok++;
-          const row = rows.find((x) => x[iName] === t.name);
-          if (row) { row[iStatus] = '已打招呼'; if (iUpd >= 0) row[iUpd] = new Date().toISOString().slice(0, 10); }
-          logs.push(`${t.name}（${t.stars}）：已打招呼`);
+          const row = findRow(t);
+          if (!row) logs.push(`⚠️ 台账里没定位到「${t.name}（${t.role}）」这一行，状态未改，请手动核对。`);
+          else { row[iStatus] = '已打招呼'; if (iUpd >= 0) row[iUpd] = new Date().toISOString().slice(0, 10); }
+          logs.push(`${t.name}（${t.role}，${t.stars}）：已打招呼`);
         } else {
           fail++;
-          logs.push(`${t.name}：失败 —— ${out.trim().slice(0, 80)}`);
+          logs.push(`${t.name}（${t.role}）：失败 —— ${out.trim().slice(0, 80)}`);
         }
         await sleep(3000);   // 文档：循环打太快撞列表刷新会偶发失败
       }
@@ -352,6 +371,9 @@ const TASKS = {
       const iStatus = header.indexOf('状态'), iRole = header.indexOf('应聘岗位');
       const iAi = header.indexOf('AI建议'), iName = header.indexOf('姓名');
       const iBg = header.indexOf('现职/背景'), iNote = header.indexOf('备注');
+      // 台账缺这些列时 indexOf 返回 -1，写入会静默丢失（写进数组的 -1 属性，CSV 序列化时消失）。
+      // 宁可报错让人加列，也不要假装修完。
+      if (iAi < 0) throw new Error('台账缺少「AI建议」列，请在表头补上（见 skills/recruit-daily/references/ledger-and-report.md）再跑。');
       const context = fs.readFileSync(path.join(ctx.dataHome, 'CONTEXT.md'), 'utf8');
 
       const targets = rows.filter((r) => r[iStatus] === '待初筛' && !r[iAi]
@@ -511,12 +533,15 @@ const TASKS = {
       const target = ctx.targetRole
         ? rows.filter((r) => !r[iHard] && r[iRole] === ctx.targetRole)
         : rows.filter((r) => !r[iHard]);
-      return target.map((r) => `boss chat "${r[1]}"`);
+      return target.map((r) => `boss chat "${r[header.indexOf('姓名')]}"`);
     },
     async execute(ctx, logs) {
       const { header, rows } = ctx.readLedger();
       const iHard = header.indexOf('硬门槛'), iRole = header.indexOf('应聘岗位');
-      const iNote = header.indexOf('备注');
+      const iNote = header.indexOf('备注'), iName = header.indexOf('姓名');
+      // 缺列时 indexOf = -1：verdict 会写进数组的 -1 属性，CSV 序列化时静默消失。
+      // 必须在这里挡住，否则跑完看起来成功、台账里一条记录都没有。
+      if (iHard < 0) throw new Error('台账缺少「硬门槛」列，请在表头补上（见 skills/recruit-daily/references/ledger-and-report.md）再跑。');
       const targets = ctx.targetRole
         ? rows.filter((r) => !r[iHard] && r[iRole] === ctx.targetRole)
         : rows.filter((r) => !r[iHard]);
@@ -525,7 +550,7 @@ const TASKS = {
       let filled = 0, failed = 0;
       for (let i = 0; i < targets.length; i++) {
         const row = targets[i];
-        const name = row[1];
+        const name = row[iName];
         STATE.current = i + 1;
         STATE.total = targets.length;
         const r = await runOne(`boss chat "${name}"`, 45000);
@@ -581,7 +606,9 @@ async function run(token, confirm) {
   if (Date.now() - t.created > TICKET_TTL) { TICKETS.delete(token); return { ok: false, error: '票据已过期，请重新点按钮' }; }
   if (STATE.running) return { ok: false, error: '已有任务在跑，等它结束' };
 
-  TICKETS.set(token, { ...t, used: true });
+  // 就地标记，不做整体替换：preview() 可能在此期间为同一任务签新票，
+  // 整体替换 TICKETS.set 有把别人的新条目覆盖掉的风险。
+  t.used = true;
   const def = TASKS[t.task];
   STATE = { running: true, task: t.task, current: 0, total: 0, logs: [], done: false, ok: null,
     paused: false, pauseRequested: false, cancelRequested: false, cancelled: false,

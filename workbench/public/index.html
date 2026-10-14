@@ -148,13 +148,17 @@
     <button class="tab" data-view="report">日报</button>
   </div>
 
-  <!-- 今日 -->
+  <!-- 今日（驾驶舱：状态扫描 → 决策卡） -->
   <div class="view active" id="view-today">
     <div class="inbox-entry">
       <div><strong>先处理候选人的新消息</strong><p id="inboxEntrySummary">正在读取未读待办…</p></div>
       <button class="btn btn-primary" id="openInbox">查看未读待办</button>
     </div>
     <div class="stats" id="todayStats"></div>
+    <div class="chart-card" style="margin-bottom:14px">
+      <h3>今天该干什么</h3><p>按优先级排的建议 —— 每条后面是一句可直接说的话（对话形态也能用同一句）</p>
+      <div id="todayActions"></div>
+    </div>
     <div class="charts-grid">
       <div class="chart-card">
         <h3>待你确认（面试顺口问）</h3><p>简历里看不出、只有人能问的事</p>

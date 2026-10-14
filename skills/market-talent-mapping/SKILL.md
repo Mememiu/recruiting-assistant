@@ -12,7 +12,7 @@ description: >
 
 把 Boss 直聘的实时求职人才数据，调研分析成一份**能指导招聘实践**的报告：讲清某岗市场真实情况（供给/薪资/学历/年限/命脉/地域），给出可直接执行的招聘动作。
 
-产出：**本地 markdown（事实源，必出）**；有 lark-cli 再出飞书云文档（给老板/可脱敏喂猎头）；需要可扫读版再出 HTML。
+产出：**本地 markdown（事实源，必出）**；需要可扫读版再出 HTML。（可选）要发飞书云文档给老板，见 `optional/lark-integration.md` 第 2 节。
 
 这是**编排文档**：渠道命令细节走 `boss help` 与 [`references/channels-and-analysis.md`](references/channels-and-analysis.md)。本文档管顺序、判断、数据可信度、报告结构与安全。
 

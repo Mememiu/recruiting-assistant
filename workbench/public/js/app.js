@@ -87,6 +87,77 @@ async function loadToday() {
     : `<div class="empty" style="padding:12px">还没有 AI 建议 —— 去「任务」页跑「批量 AI 初筛」<br><span style="font-size:12px">（只花 token，不碰 BOSS）</span></div>`;
 }
 
+// ── 驾驶舱：与 recruit-today skill 共用同一份扫描（/api/today）
+
+const KIND_LABEL = {
+  unread: '读未读', grill: '梳理标准', hardgate: '硬门槛', screen: '初筛',
+  greet: '打招呼', followup: '跟进未回复', mapping: '市场盘点', report: '出日报',
+};
+// 每条动作在工作台里对应的落地页（说同一句话，在 UI 里点同一个去处）
+const KIND_GOTO = {
+  unread: () => showView('inbox'),
+  hardgate: () => showView('task'),
+  screen: () => showView('task'),
+  greet: () => showView('task'),
+  report: () => showView('task'),
+};
+
+async function loadCockpit() {
+  const box = $('#todayActions');
+  let s;
+  try { s = await (await fetch('/api/today')).json(); }
+  catch { box.innerHTML = '<div class="empty">驾驶舱读取失败</div>'; return; }
+  if (!s.ok) { box.innerHTML = `<div class="empty">${esc(s.error || '扫描失败')}</div>`; return; }
+
+  if (!s.ledgerFound || s.contextMissing) {
+    box.innerHTML = (s.warnings || []).map((w) =>
+      `<div style="padding:8px 0;color:var(--warn,#b45309)">⚠️ ${esc(w)}</div>`).join('')
+      + '<div class="empty" style="padding:12px">工作区还没就绪 —— 先在对话里说「初始化招聘工作区」</div>';
+    return;
+  }
+
+  // 岗位状态一览
+  const roleHtml = (s.roleCards || []).map((rc) => {
+    const bits = [];
+    if (rc.unread) bits.push(`未读 ${rc.unread}`);
+    if (rc.noHardGate) bits.push(`待过硬门槛 ${rc.noHardGate}`);
+    if (rc.toScreen) bits.push(`待初筛 ${rc.toScreen}`);
+    if (rc.passed) bits.push(`已过初筛 ${rc.passed}`);
+    if (rc.greeted) bits.push(`已打招呼 ${rc.greeted}`);
+    const iter = rc.iter && rc.iter.good
+      ? `<span style="color:var(--gray-400);font-size:12px"> · 有效词「${esc(String(rc.iter.good).split(/[/、,，]/).slice(0, 3).join('/'))}」</span>` : '';
+    return `<div style="padding:7px 0;border-bottom:1px solid var(--gray-100);font-size:13px">
+      <b>${esc(rc.name)}</b>${rc.priority ? ` <span style="color:var(--gray-400)">P${esc(String(rc.priority))}</span>` : ''}
+      <span style="color:var(--gray-500)">· ${esc(rc.status || '')}</span>
+      ${rc.needsGrill ? '<span style="color:#b45309">⚠️ 标准未梳理</span>' : ''}<br>
+      <span style="color:var(--gray-600)">${bits.length ? esc(bits.join(' · ')) : '暂无候选人'}</span>${iter}</div>`;
+  }).join('');
+
+  // 建议动作（带「在工作台里去哪」的跳转 + 「在对话里说什么」的复制句）
+  const actionHtml = (s.actions || []).map((a, i) => {
+    const goto = KIND_GOTO[a.kind];
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--gray-100);font-size:13px">
+      <span style="color:var(--gray-400)">${i + 1}.</span>
+      <b>${esc(KIND_LABEL[a.kind] || a.kind)}</b>
+      <span style="color:var(--gray-500)">[${esc(a.role)}]</span>
+      ${a.free ? '' : '<span style="color:#b45309">⚠️ 消耗额度</span>'}<br>
+      <span style="color:var(--gray-600)">${esc(a.why)}</span><br>
+      <span style="color:var(--gray-400);font-size:12px">对话里说：</span><code style="font-size:12px">${esc(a.say)}</code>
+      ${goto ? ` <a href="javascript:void(0)" data-goto="${esc(a.kind)}" style="font-size:12px">→ 在工作台打开</a>` : ''}</div>`;
+  }).join('');
+
+  const warnHtml = (s.warnings || []).length
+    ? (s.warnings || []).map((w) => `<div style="padding:6px 0;color:#b45309;font-size:13px">⚠️ ${esc(w)}</div>`).join('') : '';
+
+  box.innerHTML = warnHtml + roleHtml
+    + `<div style="margin-top:10px;padding-top:8px;border-top:2px solid var(--gray-200)">
+       <div style="font-size:13px;color:var(--gray-500);margin-bottom:4px">建议顺序（免费优先）：</div>${actionHtml}</div>`;
+
+  box.querySelectorAll('[data-goto]').forEach((el) => {
+    el.addEventListener('click', () => { const f = KIND_GOTO[el.dataset.goto]; if (f) f(); });
+  });
+}
+
 // ── 数据新鲜度：这份数据是几点抓的？（不知道会造成误判）
 
 async function loadFreshness() {

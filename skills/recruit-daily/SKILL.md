@@ -11,13 +11,15 @@ description: >
 每日主力动作：把 Boss 直聘的「查未读 → 主动寻源 → 初筛 → 打招呼 → 建档 → 出日报」串成一条流水线。
 
 **这是编排文档**：CLI 命令细节见 [`references/channels.md`](references/channels.md)，
-台账与日报格式见 [`references/ledger-and-report.md`](references/ledger-and-report.md)，
-日报卡片推送见 [`references/daily-card.md`](references/daily-card.md)。
+台账与日报格式见 [`references/ledger-and-report.md`](references/ledger-and-report.md)。
 本文档只管「顺序、判断、安全」。
 
 ## 铁律：先读事实源，别凭记忆
 
-开工**先读**（都在工作区根下）：
+开工**先跑驾驶舱** `skills/recruit-today/scripts/today-scan.js`（只读，5 秒）——
+它会从事实源算出「今天该干什么」并按优先级排好。没有它，你只能凭记忆决定先干哪件。
+
+然后**先读**（都在工作区根下）：
 - `CONTEXT.md` —— 术语、**初筛硬规则**、**在招岗位与优先级**（唯一事实源，随时可能更新）。
 - `AGENTS.md` —— 分工与「不可逆动作等确认」红线。
 - `01-jd/_internal/<role>.md` —— 各岗命脉技能 / 排除信号 / **关键词迭代表**（寻源前必读，越搜越准）。
@@ -51,18 +53,15 @@ description: >
 
 6. **补台账** `02-sourcing/dedup-ledger.csv`（去重键 = 姓名+应聘岗位）。格式见 ledger-and-report.md。台账是**唯一事实源**。
    - **完成判据**：本轮接触过的每个候选人在台账里有且仅有一行；无重复序号；按岗位计数与本轮处理人数对得上。
+   - **顺带同步候选人池** `02-sourcing/candidate-pool.md`：把台账里状态推进到「初筛通过」及以上的人，按岗位写进
+     candidate-pool 对应小节（姓名｜背景｜薪资/年限｜学历｜一句话｜状态｜简历链接）。这个文件是给人看的
+     shortlist 视图，不是事实源——**从台账生成，别手改**；没有新推进的人就跳过这步。
 
-7. **出日报**：
-   - 本机有 `lark-cli` 且已配置 → 飞书云文档；
-   - 没有 → 写本地 `runtime/reports/YYYY-MM-DD.md`。
-   - 两种载体结构相同，见 ledger-and-report.md。内容**从台账同步**，不另立事实源。
+7. **出日报**：写本地 `runtime/reports/YYYY-MM-DD.md`（结构见 ledger-and-report.md）。内容**从台账同步**，不另立事实源。
+   - （可选）想发飞书云文档/IM 卡片，读 `optional/lark-integration.md`；没配 lark-cli 就跳过，本地日报不受影响。
    - **完成判据**：日报含今日概况数字、按岗人选表、待用户确认清单三块，且文档链接/文件路径已回给用户。
 
-8. **推日报卡片（可选补充）**：用户要在 IM 收到提醒时，往飞书推一张互动卡片，正文只放
-   「四个数字 + 重点人选 + 待你拍板清单」，长尾折叠，按钮跳第 7 步的文档。骨架、字段坑与发送命令见
-   [`references/daily-card.md`](references/daily-card.md)。没 IM 通道 → 跳过，别伪造推送。
-   - **完成判据**：卡片过 schema 校验**且**过美观度自查（校验通过≠可发），五层结构齐，
-     数字与台账一致，`message_id` 与收件人已回给用户。
+8. **推日报卡片（可选，跳过即完成）**：没配 lark-cli 或不用飞书 → 整步跳过，把日报文件路径回给用户就算完，不伪造推送。要做才读 `optional/lark-integration.md` 第 3 节 + `optional/lark-daily-card.md`（五层结构、字段坑、发送命令都在那里）。
 
 9. **回填关键词迭代表**：从本轮「初筛通过/强匹配」的真实简历反向提取搜索词，
    写回 `01-jd/_internal/<role>.md` 的迭代表（有效词/无效词/积极信号/拒绝模式）。下轮先读它。
