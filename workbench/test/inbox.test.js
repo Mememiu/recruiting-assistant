@@ -273,7 +273,9 @@ test('runner pull integrates parsing and persistence; nonzero output never impor
     const Q = String.fromCharCode(34);
     fs.writeFileSync(stub, '@echo off' + String.fromCharCode(13, 10) + 'node ' + Q + jsFile + Q + ' %*' + String.fromCharCode(13, 10));
   } else {
-    fs.writeFileSync(stub, '#!' + process.execPath + '\nprocess.stdout.write(' + JSON.stringify(sample) + ');\n');
+    // POSIX：桩也走 node 执行 jsFile，与 Windows 分支同构 ——
+    // 否则 writeStub() 改 jsFile 时 shebang 桩读不到，改退出码的断言会假失败。
+    fs.writeFileSync(stub, '#!' + process.execPath + String.fromCharCode(10) + 'require(' + JSON.stringify(jsFile) + ');' + String.fromCharCode(10));
     fs.chmodSync(stub, 0o755);
   }
   writeStub('');

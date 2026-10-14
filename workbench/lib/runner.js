@@ -606,7 +606,9 @@ async function run(token, confirm) {
   if (Date.now() - t.created > TICKET_TTL) { TICKETS.delete(token); return { ok: false, error: '票据已过期，请重新点按钮' }; }
   if (STATE.running) return { ok: false, error: '已有任务在跑，等它结束' };
 
-  TICKETS.set(token, { ...t, used: true });
+  // 就地标记，不做整体替换：preview() 可能在此期间为同一任务签新票，
+  // 整体替换 TICKETS.set 有把别人的新条目覆盖掉的风险。
+  t.used = true;
   const def = TASKS[t.task];
   STATE = { running: true, task: t.task, current: 0, total: 0, logs: [], done: false, ok: null,
     paused: false, pauseRequested: false, cancelRequested: false, cancelled: false,
