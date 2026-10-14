@@ -18,6 +18,7 @@
 
 | 场景 | 读 |
 |---|---|
+| 每天开工第一站 / 今天该干什么 / 不确定下一步 | `skills/recruit-today/SKILL.md`（只读驾驶舱，输出决策卡） |
 | 不确定该走哪个流程 / 用户问"这套工具怎么用" | `skills/ask-guide/SKILL.md` |
 | 每日招聘：查未读 / 主动寻源 / 初筛 / 打招呼 / 补台账 / 出日报 | `skills/recruit-daily/SKILL.md` |
 | 深度盘点某岗市场人才：供给/薪资对标/目标公司有谁/好不好招 | `skills/market-talent-mapping/SKILL.md` |

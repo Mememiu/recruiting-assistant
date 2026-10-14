@@ -263,9 +263,21 @@ test('ledger cell edits address stable row IDs and reject ambiguous legacy name-
 test('runner pull integrates parsing and persistence; nonzero output never imports; no real BOSS executed', async (t) => {
   const { inbox, root, ledger } = setup(t);
   const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
-  const stub = path.join(bin, 'boss');
-  fs.writeFileSync(stub, '#!' + process.execPath + '\nprocess.stdout.write(' + JSON.stringify(sample) + ');\n'); fs.chmodSync(stub, 0o755);
-  const oldPath = process.env.PATH; process.env.PATH = bin + ':' + oldPath;
+  const isWin = process.platform === 'win32';
+  // Windows 上 npm 全局装的是 boss.cmd，且 Node 无 shell 不能直接 exec .cmd —— 桩跟着平台形态走
+  const stub = path.join(bin, isWin ? 'boss.cmd' : 'boss');
+  const jsFile = path.join(bin, 'boss-stub.js');
+  const writeStub = (extra) => fs.writeFileSync(jsFile,
+    'process.stdout.write(' + JSON.stringify(sample) + ');' + extra + '\n');
+  if (isWin) {
+    const Q = String.fromCharCode(34);
+    fs.writeFileSync(stub, '@echo off' + String.fromCharCode(13, 10) + 'node ' + Q + jsFile + Q + ' %*' + String.fromCharCode(13, 10));
+  } else {
+    fs.writeFileSync(stub, '#!' + process.execPath + '\nprocess.stdout.write(' + JSON.stringify(sample) + ');\n');
+    fs.chmodSync(stub, 0o755);
+  }
+  writeStub('');
+  const oldPath = process.env.PATH; process.env.PATH = bin + path.delimiter + oldPath;
   t.after(() => { process.env.PATH = oldPath; });
   const ctx = { dataHome: root, inbox, opts: {} };
   const ticket = runner.preview('pull-unread', ctx);
@@ -276,7 +288,7 @@ test('runner pull integrates parsing and persistence; nonzero output never impor
   assert.equal(result.ok, true); assert.equal(result.result.added, 1);
   assert.equal((await runner.run(ticket.token, true)).ok, false);
   const before = fs.readFileSync(ledger.file, 'utf8');
-  fs.writeFileSync(stub, '#!' + process.execPath + '\nprocess.stdout.write(' + JSON.stringify(sample) + ');process.exitCode=1;\n');
+  writeStub('process.exitCode=1;');
   const failed = await runner.run(runner.preview('pull-unread', ctx).token, true);
   assert.equal(failed.ok, false);
   assert.equal(fs.readFileSync(ledger.file, 'utf8'), before);

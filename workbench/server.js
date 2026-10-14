@@ -20,6 +20,7 @@ const runner = require('./lib/runner');
 const { screen: aiScreen } = require('./lib/ai');
 const { reviewResume } = require('./lib/resume-review');
 const report = require('./lib/report');
+const todayScan = require('./lib/today-scan');
 const { cleanupOrphanScreenshots } = require('./lib/storage');
 
 const ROOT = __dirname;
@@ -298,6 +299,14 @@ const server = http.createServer((req, res) => {
         out.recent = out.recent.slice(0, 12);
       }
       return sendJSON(res, 200, { ok: true, ...out });
+    }
+
+    /** 今日驾驶舱：只读状态扫描（与 recruit-today skill 共用同一份实现） */
+    if (u === '/api/today') {
+      try {
+        const s = todayScan.scan(cfg.dataHome, cfg.ledger);
+        return sendJSON(res, 200, { ok: true, ...s });
+      } catch (e) { return sendJSON(res, 500, { ok: false, error: e.message }); }
     }
 
     /** 数据新鲜度：台账里的数据是几点抓的 */

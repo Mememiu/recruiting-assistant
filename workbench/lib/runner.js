@@ -17,6 +17,8 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
+const IS_WIN = process.platform === 'win32';
+
 // ── 白名单：只允许这些
 const ALLOWED_SUBCOMMANDS = ['list', 'chat', 'recommend', 'search', 'greet', 'help', 'version', 'shutdown'];
 
@@ -39,8 +41,33 @@ let batchControl = null;
 /** 让子进程一定能找到 boss（~/.local/bin 不一定在当前 PATH 里） */
 function childEnv() {
   const home = os.homedir();
-  const extra = [path.join(home, '.local', 'bin'), '/usr/local/bin', '/usr/bin', '/bin'];
-  return { ...process.env, PATH: [...new Set([...(process.env.PATH || '').split(':'), ...extra])].join(':') };
+  const sep = path.delimiter;                       // Windows 是 ';'，POSIX 是 ':'
+  const extra = IS_WIN
+    ? [path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm'),
+       path.join(home, '.local', 'bin')]
+    : [path.join(home, '.local', 'bin'), '/usr/local/bin', '/usr/bin', '/bin'];
+  return { ...process.env, PATH: [...new Set([...(process.env.PATH || '').split(sep), ...extra])].join(sep) };
+}
+
+/**
+ * 跨平台执行 boss。
+ * Windows 上 npm 全局装出来的是 boss.cmd，Node 无 shell 直接 spawn 会 EINVAL
+ * （Node 18.20.2+ 起的修复：不再把 .cmd/.bat 直接交给 CreateProcess），
+ * 所以 Windows 走 cmd /c；POSIX 维持原样。
+ */
+function runOne(cmd, timeoutMs = 60000) {
+  return new Promise((resolve) => {
+    const parts = splitCmd(cmd);
+    const bin = IS_WIN ? 'cmd' : parts[0];
+    const args = IS_WIN ? ['/d', '/s', '/c', parts[0], ...parts.slice(1)] : parts.slice(1);
+    const p = spawn(bin, args, { env: childEnv(), shell: false });
+    let out = '', err = '';
+    const t = setTimeout(() => { try { p.kill(); } catch {} resolve({ out, err: err + '\n[超时]', code: -1 }); }, timeoutMs);
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('close', (code) => { clearTimeout(t); resolve({ out, err, code }); });
+    p.on('error', (e) => { clearTimeout(t); resolve({ out, err: String(e.message || e), code: -1 }); });
+  });
 }
 
 function validate(cmd, task) {
@@ -73,19 +100,6 @@ function splitCmd(s) {
   }
   if (cur) out.push(cur);
   return out;
-}
-
-function runOne(cmd, timeoutMs = 60000) {
-  return new Promise((resolve) => {
-    const parts = splitCmd(cmd);
-    const p = spawn(parts[0], parts.slice(1), { env: childEnv(), shell: false });
-    let out = '', err = '';
-    const t = setTimeout(() => { try { p.kill(); } catch {} resolve({ out, err: err + '\n[超时]', code: -1 }); }, timeoutMs);
-    p.stdout.on('data', (d) => { out += d; });
-    p.stderr.on('data', (d) => { err += d; });
-    p.on('close', (code) => { clearTimeout(t); resolve({ out, err, code }); });
-    p.on('error', (e) => { clearTimeout(t); resolve({ out, err: String(e.message || e), code: -1 }); });
-  });
 }
 
 function recognizeResume(file) {
