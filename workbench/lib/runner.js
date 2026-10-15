@@ -161,15 +161,16 @@ async function captureInboxResume(ctx, item, logs) {
   return { ok: true, hasText: !!(ocr.ok && ocr.text) };
 }
 
-/** 拼 boss search 命令（值可能含空格，都加引号；没填的参数一律不传） */
+/**
+ * 拼 boss search 命令（上游 @joohw/boss-cli）。
+ * 上游 search 只接受 [关键词]，没有筛选参数 —— 年龄/学历/岗位等筛选在搜索页做不了，
+ * 交给推荐池的 --job（recommend/greet 都接 --job）来收窄。硬规则初筛在拿到列表后本地做。
+ * 值可能含空格，加引号。
+ */
 function buildSearchCmd(ctx, s) {
   const kw = String(s.keyword || '').trim();
-  const parts = ['boss search', `"${kw}"`];
-  if (s.job) parts.push('--job', `"${s.job}"`);
-  if (s.ageRange) parts.push('--age-range', `"${String(s.ageRange).trim()}"`);
-  if (s.degree) parts.push('--degree', `"${String(s.degree).trim()}"`);
-  if (s.city) parts.push('--city', `"${String(s.city).trim()}"`);
-  return parts.join(' ');
+  if (!kw) return null;
+  return `boss search "${kw}"`;
 }
 
 /** 打招呼候选名单：只按本机配置的评级阈值选已通过的推荐池人选。 */
@@ -215,28 +216,28 @@ const TASKS = {
   },
 
   /**
-   * 搜索池寻源：用关键词 + 筛选参数去 BOSS 搜索页捞人
-   * fork 0.8.0 起支持 --degree / --age-range / --exp 等筛选，且每次搜索前会先清空筛选
+   * 搜索池寻源：按关键词去 BOSS 常规搜索页捞人（上游 @joohw/boss-cli）。
+   * 上游 search 只接受关键词，没有年龄/学历等筛选参数 —— 硬规则初筛在拿到列表后本地做。
    */
   'search-pool': {
     label: '搜索池寻源',
-    desc: '按关键词去 BOSS 人才库捞人，可带学历 / 年龄 / 经验筛选。'
-      + '只读，不消耗简历额度，也不打招呼。结果存到 runtime/raw/。'
-      + '⚠️ 搜索池打招呼消耗的权益与推荐池不同，请先核对平台当前额度。'
-      + '—— 没畅聊卡时把这里当储备池，主动联系请走推荐池。',
+    desc: '按关键词去 BOSS 常规搜索页捞人。只读，不消耗简历额度，也不打招呼。结果存到 runtime/raw/。'
+      + '⚠️ 上游 search 无筛选参数（年龄/学历），需按关键词搜后在本地硬规则初筛；'
+      + '要按岗位收窄请用「拉取推荐牛人」。搜索结果姓名打码。',
     plan: (ctx) => {
       const s = (ctx.opts || {});
-      if (!String(s.keyword || '').trim()) return [];
-      return [buildSearchCmd(ctx, s)];
+      const cmd = buildSearchCmd(ctx, s);
+      return cmd ? [cmd] : [];
     },
     async execute(ctx, logs) {
       const s = (ctx.opts || {});
       const cmd = buildSearchCmd(ctx, s);
+      if (!cmd) { logs.push('没填关键词，未执行。'); return { ok: false }; }
       logs.push('$ ' + cmd);
       const r = await runOne(cmd, 120000);
       if (r.code !== 0 && !r.out.trim()) {
         logs.push('执行失败：' + (r.err || ('退出码 ' + r.code)));
-        logs.push('（如果提示参数值不对，它通常会把可选项列出来 —— 照着改即可）');
+        logs.push('（上游 search 只接受 [关键词]，不支持筛选参数；关键词含空格已自动加引号）');
         return { ok: false };
       }
       const dir = path.join(ctx.dataHome, 'runtime', 'raw');
