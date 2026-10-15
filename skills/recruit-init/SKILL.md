@@ -17,7 +17,7 @@ description: >
 先检查现有环境，不运行会修改系统配置的安装脚本：
 
 1. `node --version` —— 需要 Node ≥ 20。没有 → 引导去 https://nodejs.org 装 LTS。
-2. `boss help` —— BOSS 直聘 CLI。没有 → 记录待安装项并说明招聘平台功能暂不可用。
+2. `boss help` —— BOSS 直聘 CLI（上游 `@joohw/boss-cli`）。没有 → `npm install -g @joohw/boss-cli` 装上；装完跑 `boss login` 扫码登录。仍装不上 → 记录待安装项并说明招聘平台功能暂不可用（本地简历 review、台账、驾驶舱不受影响）。
 3. 本机装有 Chrome 或 Edge（CLI 靠它驱动真实浏览器）。
 4. **可选（不需要飞书就整条跳过）**：`lark-cli`。装了 → 日报可发飞书云文档、约面试可自动建日历日程、可从飞书邮箱收简历；没装 → 日报落本地 md、约面试给手动建会清单、简历丢本地文件。详见 `optional/lark-integration.md`。
 

@@ -723,14 +723,8 @@ async function loadTasks() {
       ${t.id === 'search-pool' ? `
         <div class="tform">
           <input class="f-kw" placeholder="搜索关键词（必填）" style="min-width:210px">
-          <select class="f-job">
-            <option value="">不限岗位</option>
-            ${roles.map((x) => `<option>${esc(x)}</option>`).join('')}
-          </select>
-          <input class="f-age" placeholder="年龄范围" style="width:104px">
-          <input class="f-degree" placeholder="学历 如 本科" style="width:104px">
         </div>
-        <div class="thint">筛选参数可留空。传错它会把可选项列出来，照着改就行。</div>` : ''}
+        <div class="thint">上游 search 只按关键词搜，无年龄/学历筛选 —— 硬规则初筛在拿到列表后本地做；要按岗位收窄用「拉取推荐牛人」。</div>` : ''}
       ${t.id === 'recommend-pool' ? `
         <div class="tform">
           <select class="f-job">
@@ -756,11 +750,10 @@ async function askRun(task, suppliedOpts) {
     let opts = suppliedOpts || {};
     if (task === 'search-pool' || task === 'recommend-pool') {
       const card = btn.closest('.task-card');
-      opts = { job: card.querySelector('.f-job') ? card.querySelector('.f-job').value : '' };
+      const jobSel = card.querySelector('.f-job');
+      opts = { job: jobSel ? jobSel.value : '' };
       if (task === 'search-pool') {
         opts.keyword = card.querySelector('.f-kw').value.trim();
-        opts.ageRange = card.querySelector('.f-age').value.trim();
-        opts.degree = card.querySelector('.f-degree').value.trim();
         if (!opts.keyword) { alert('先填关键词，再预览'); return; }
       }
     }
