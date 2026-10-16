@@ -13,11 +13,12 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Ledger } = require('./lib/ledger');
 const { LedgerCleanup } = require('./lib/ledger-cleanup');
 const { Inbox } = require('./lib/inbox');
 const runner = require('./lib/runner');
-const { screen: aiScreen } = require('./lib/ai');
+const { screen: aiScreen, chat: aiChat } = require('./lib/ai');
 const { reviewResume } = require('./lib/resume-review');
 const report = require('./lib/report');
 const todayScan = require('./lib/today-scan');
@@ -26,20 +27,119 @@ const { cleanupOrphanScreenshots } = require('./lib/storage');
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+const SESSION_TOKEN = crypto.randomBytes(32).toString('hex');
 cfg.dataHome = path.resolve(ROOT, cfg.dataHome);
 
 // 密钥单独存：config.local.json（已在 .gitignore 里），找不到就当没配
 const localPath = path.join(ROOT, 'config.local.json');
-if (fs.existsSync(localPath)) {
+function mergeLocalConfig(local) {
+  cfg.ai = { ...(cfg.ai || {}), ...(local.ai || {}) };
+  cfg.outreach = { ...(cfg.outreach || {}), ...(local.outreach || {}) };
+  cfg.push = { ...(cfg.push || {}), ...(local.push || {}) };
+  if (cfg.ai && cfg.ai.apiKey) cfg.ai.enabled = true;
+}
+function readLocalConfig() {
+  if (!fs.existsSync(localPath)) return {};
   try {
-    const local = JSON.parse(fs.readFileSync(localPath, 'utf8'));
-    cfg.ai = { ...(cfg.ai || {}), ...(local.ai || {}) };
-    cfg.outreach = { ...(cfg.outreach || {}), ...(local.outreach || {}) };
+    const value = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('配置必须是 JSON 对象');
+    return value;
   } catch (e) {
     console.warn('  ⚠️ config.local.json 读不出来，已忽略：' + e.message);
+    return {};
   }
 }
-if (cfg.ai && cfg.ai.apiKey) cfg.ai.enabled = true;
+function writeLocalConfig(local) {
+  const temp = localPath + '.' + crypto.randomUUID() + '.tmp';
+  fs.writeFileSync(temp, JSON.stringify(local, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(temp, localPath);
+}
+function aiConfigView() {
+  const ai = cfg.ai || {};
+  const outreach = cfg.outreach || {};
+  const push = cfg.push || {};
+  const key = String(ai.apiKey || '');
+  return {
+    configPath: localPath,
+    ai: {
+      baseUrl: String(ai.baseUrl || ''),
+      model: String(ai.model || ''),
+      cheapModel: String(ai.cheapModel || ''),
+      reasoningEffort: String(ai.reasoningEffort || ''),
+      timeoutMs: Number(ai.timeoutMs || 120000),
+      temperature: Number(ai.temperature ?? 0.2),
+      apiKeyConfigured: !!key,
+      apiKeyHint: key ? key.slice(0, 8) + '...' + key.slice(-4) : '',
+    },
+    outreach: { minStars: outreach.minStars ?? null },
+    push: { sendKeyConfigured: !!push.sendKey },
+    agent: {
+      get: 'GET /api/ai/config',
+      update: 'POST /api/ai/config',
+      test: 'POST /api/ai/test',
+      note: '可以由你的 agent 读取本接口，并用 POST 写回；密钥不会在 GET 返回。'
+    }
+  };
+}
+function applyAiConfig(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('配置体必须是 JSON 对象');
+  const local = readLocalConfig();
+  local.ai = { ...(local.ai || {}) };
+  local.outreach = { ...(local.outreach || {}) };
+  const text = (value, name, max = 512) => {
+    const s = String(value ?? '').trim();
+    if (s.length > max || /[\r\n\0]/.test(s)) throw new Error(name + '格式无效');
+    return s;
+  };
+  if (data.baseUrl !== undefined) {
+    const value = text(data.baseUrl, 'API 地址');
+    if (value) {
+      const u = new URL(value);
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('API 地址必须使用 http/https');
+    }
+    local.ai.baseUrl = value;
+  }
+  if (data.model !== undefined) local.ai.model = text(data.model, '主模型');
+  if (data.cheapModel !== undefined) local.ai.cheapModel = text(data.cheapModel, '轻量模型');
+  if (data.reasoningEffort !== undefined) {
+    const value = String(data.reasoningEffort || '');
+    if (!['', 'low', 'medium', 'high'].includes(value)) throw new Error('推理强度无效');
+    local.ai.reasoningEffort = value;
+  }
+  if (data.timeoutMs !== undefined) {
+    const value = Number(data.timeoutMs);
+    if (!Number.isFinite(value) || value < 1000 || value > 600000) throw new Error('超时时间应在 1-600 秒之间');
+    local.ai.timeoutMs = Math.round(value);
+  }
+  if (data.temperature !== undefined) {
+    const value = Number(data.temperature);
+    if (!Number.isFinite(value) || value < 0 || value > 2) throw new Error('温度应在 0-2 之间');
+    local.ai.temperature = value;
+  }
+  if (data.apiKey !== undefined) {
+    const value = String(data.apiKey || '').trim();
+    if (value) local.ai.apiKey = value;
+    else if (data.clearApiKey === true) delete local.ai.apiKey;
+  }
+  if (data.minStars !== undefined) {
+    if (data.minStars === null || data.minStars === '') local.outreach.minStars = null;
+    else {
+      const value = Number(data.minStars);
+      if (!Number.isInteger(value) || value < 1 || value > 3) throw new Error('最低评级应为 1-3');
+      local.outreach.minStars = value;
+    }
+  }
+  writeLocalConfig(local);
+  mergeLocalConfig(local);
+  if (data.clearApiKey === true && !local.ai.apiKey) {
+    delete cfg.ai.apiKey;
+    cfg.ai.enabled = false;
+  }
+  return aiConfigView();
+}
+
+const localConfig = readLocalConfig();
+mergeLocalConfig(localConfig);
 
 const ledger = new Ledger(cfg);
 const inbox = new Inbox(cfg, ledger);
@@ -64,7 +164,8 @@ function serveStatic(req, res, urlPath) {
   let rel = decodeURIComponent(urlPath.split('?')[0]);
   if (rel === '/' || rel === '') rel = '/index.html';
   const target = path.normalize(path.join(PUBLIC, rel));
-  if (!target.startsWith(PUBLIC)) { res.writeHead(403); return res.end('forbidden'); }
+  const publicRoot = path.resolve(PUBLIC);
+  if (target !== path.join(publicRoot, 'index.html') && !target.startsWith(publicRoot + path.sep)) { res.writeHead(403); return res.end('forbidden'); }
   if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
     res.writeHead(404); return res.end('not found');
   }
@@ -90,12 +191,15 @@ function readBody(req, cb) {
  */
 const API_TOKEN_HEADER = 'x-recruit-token';
 function allowMutation(req) {
-  if (req.headers[API_TOKEN_HEADER]) return true;
+  const supplied = String(req.headers[API_TOKEN_HEADER] || '');
+  const expected = Buffer.from(SESSION_TOKEN);
+  const actual = Buffer.from(supplied);
+  if (actual.length === expected.length && crypto.timingSafeEqual(actual, expected)) return true;
   const origin = req.headers.origin;
-  if (!origin) return true;                       // curl / 本机脚本不带 Origin，放行
+  if (!origin) return false;
   try {
     const u = new URL(origin);
-    return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === cfg.host;
+    return u.protocol === 'http:' && u.host === cfg.host + ':' + cfg.port;
   } catch { return false; }
 }
 
@@ -315,6 +419,78 @@ const server = http.createServer((req, res) => {
     }
 
     /** AI 用量汇总（每次调用记一行 jsonl） */
+    if (u === '/api/ai/config' && req.method === 'GET') {
+      return sendJSON(res, 200, { ok: true, ...aiConfigView() });
+    }
+    if (u === '/api/ai/config' && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
+      readBody(req, (body) => {
+        try {
+          sendJSON(res, 200, { ok: true, ...applyAiConfig(JSON.parse(body || '{}')) });
+        } catch (e) { sendJSON(res, 400, { ok: false, error: e.message }); }
+      });
+      return;
+    }
+    if (u === '/api/ai/models' && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
+      readBody(req, async (body) => {
+        try {
+          const data = JSON.parse(body || '{}');
+          const baseUrl = String(data.baseUrl || cfg.ai?.baseUrl || '').trim().replace(/\/+$/, '');
+          const apiKey = String(data.apiKey || cfg.ai?.apiKey || '').trim();
+          if (!baseUrl) throw new Error('请先填写 API 地址');
+          const modelUrl = baseUrl.endsWith('/v1') ? baseUrl + '/models' : baseUrl + '/v1/models';
+          try { new URL(modelUrl); } catch { throw new Error('API 地址格式无效，请填写完整的 http/https 地址'); }
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 15000);
+          try {
+            const headers = { 'Accept': 'application/json' };
+            if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
+            const upstream = await fetch(modelUrl, { headers, signal: ctrl.signal });
+            const rawText = await upstream.text();
+            let parsed;
+            try { parsed = JSON.parse(rawText); } catch { throw new Error('模型接口返回的不是 JSON'); }
+            if (!upstream.ok) {
+              const detail = String(parsed?.error?.message || parsed?.error || rawText || '').slice(0, 300);
+              throw new Error('模型列表请求失败（HTTP ' + upstream.status + '）' + (detail ? '：' + detail : ''));
+            }
+            const rows = Array.isArray(parsed?.data) ? parsed.data : Array.isArray(parsed?.models) ? parsed.models : [];
+            const models = rows.map((m) => {
+              const id = String(m?.id || m?.model || m?.name || '').trim();
+              const pricing = m?.pricing || {};
+              const promptPrice = String(pricing.prompt ?? pricing.input ?? '');
+              const completionPrice = String(pricing.completion ?? pricing.output ?? '');
+              const free = id.endsWith(':free') || (!!promptPrice && promptPrice === '0' && (!completionPrice || completionPrice === '0'));
+              return {
+                id,
+                name: String(m?.name || id).trim(),
+                description: String(m?.description || '').slice(0, 300),
+                contextLength: Number(m?.context_length || m?.contextLength || 0) || null,
+                pricing: pricing && typeof pricing === 'object' ? pricing : null,
+                free,
+              };
+            }).filter((m) => m.id);
+            models.sort((a, b) => a.id.localeCompare(b.id));
+            return sendJSON(res, 200, { ok: true, endpoint: modelUrl, models, total: models.length, freeCount: models.filter((m) => m.free).length });
+          } finally { clearTimeout(timer); }
+        } catch (e) { sendJSON(res, 400, { ok: false, error: e.message }); }
+      });
+      return;
+    }
+
+    if (u === '/api/ai/test' && req.method === 'POST') {
+      if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
+      readBody(req, async (body) => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (data.config && typeof data.config === 'object') applyAiConfig(data.config);
+          const r = await aiChat({ prompt: '请回复：连接成功', system: '你是 API 连通性测试助手。', cheap: true, kind: 'config-test' });
+          sendJSON(res, r.ok ? 200 : 400, r);
+        } catch (e) { sendJSON(res, 400, { ok: false, error: e.message }); }
+      });
+      return;
+    }
+
     if (u === '/api/ai/usage') {
       const f = path.join(cfg.dataHome, 'runtime', 'ai-usage.jsonl');
       const out = { calls: 0, totalTokens: 0, byModel: {}, byDay: {}, recent: [] };

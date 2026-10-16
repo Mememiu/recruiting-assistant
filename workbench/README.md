@@ -29,3 +29,21 @@ node workbench/doctor.js
 只读检查三件事：PATH 里能否找到 boss、工作台的调用方式能否真的跑起来、`boss version` 是否正常响应。任何一步失败都会给出具体原因和修法。**首次在 Windows 上使用、或换了 boss 安装位置后，先跑这个**——它把"工作台调不动 boss"这类问题在 5 秒内定位到是 PATH、spawn 还是登录态。
 
 前端是 `public/` 中的静态文件，服务端仅使用 Node.js 内置模块。macOS 在线简历 OCR 代码在 `bin/ocr-resume.swift`（Windows/Linux 无此依赖，截图照存，只是没有文字识别）。
+
+## AI API 配置
+
+工作台“设置”页可以配置任意 OpenAI 兼容 API；模型列表和计费规则取决于所配置的服务商：
+
+- `baseUrl`：服务商的 OpenAI 兼容 API 地址，通常以 `/v1` 结尾
+- `model` / `cheapModel`：填服务商返回的模型 ID；如果服务商提供免费或零价格模型，可在设置页筛选
+- `apiKey`：只写入本机 `config.local.json`，GET 接口不会返回完整值
+- `reasoningEffort`：如果模型不支持该参数，请选择“关闭”
+- `outreach.minStars`：打招呼任务的最低评级（1-3）
+
+保存后可以点“测试连接”。也可以让 agent 通过以下接口协助：
+
+- 读取：`GET /api/ai/config`
+- 保存：`POST /api/ai/config`
+- 测试：`POST /api/ai/test`
+
+以上接口仍受工作台本地 Origin 和变更 token 规则保护。

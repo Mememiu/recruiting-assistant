@@ -146,6 +146,7 @@
     <button class="tab" data-view="cand">候选人档案</button>
     <button class="tab" data-view="task">任务</button>
     <button class="tab" data-view="report">日报</button>
+  <button class="tab" data-view="settings">设置</button>
   </div>
 
   <!-- 今日（驾驶舱：状态扫描 → 决策卡） -->
@@ -314,6 +315,64 @@
         <button class="btn btn-outline-secondary btn-sm" id="runCancel">取消</button>
       </div>
       <pre class="runlog" id="runLog"></pre>
+    </div>
+  </div>
+
+  <!-- 设置：AI API / agent 协助 -->
+  <div class="view" id="view-settings">
+    <div class="chart-card" style="margin-bottom:16px">
+      <h3>AI API 配置</h3>
+      <p>支持任意 OpenAI 兼容接口。模型列表和计费规则取决于所配置的服务商。API Key 只保存在本机 <code>config.local.json</code>，不会上传到 Git，也不会在读取接口返回。</p>
+      <div class="settings-grid">
+        <label>API 地址
+          <input id="aiBaseUrl" type="url" placeholder="https://api.example.com/v1">
+        </label>
+        <label>API Key（留空表示保持原值）
+          <input id="aiApiKey" type="password" autocomplete="new-password" placeholder="your-api-key">
+        </label>
+        <label>主模型
+          <input id="aiModel" type="text" list="aiModelList" placeholder="判断用模型 ID，或先点“获取可用模型”">
+        </label>
+        <label>轻量模型
+          <input id="aiCheapModel" type="text" list="aiCheapModelList" placeholder="日报/机械任务模型，可留空">
+        </label>
+        <label class="inline-setting"><input id="aiFreeOnly" type="checkbox"> 只显示免费 / 零价格模型</label>
+        <label>推理强度
+          <select id="aiReasoningEffort">
+            <option value="">关闭</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </label>
+        <label>超时（秒）
+          <input id="aiTimeoutSec" type="number" min="1" max="600" step="1">
+        </label>
+        <label>温度
+          <input id="aiTemperature" type="number" min="0" max="2" step="0.1">
+        </label>
+        <label>打招呼最低评级
+          <select id="aiMinStars">
+            <option value="">不限制</option>
+            <option value="1">1 星</option>
+            <option value="2">2 星</option>
+            <option value="3">3 星</option>
+          </select>
+        </label>
+        <datalist id="aiModelList"></datalist>
+        <datalist id="aiCheapModelList"></datalist>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" id="aiSaveBtn">保存配置</button>
+        <button class="btn btn-outline-secondary" id="aiModelsBtn" type="button">获取可用模型</button>
+        <button class="btn btn-outline-secondary" id="aiTestBtn">测试连接</button>
+        <button class="btn btn-outline-danger" id="aiClearKeyBtn" hidden>清除 API Key</button>
+      </div>
+      <div id="aiConfigStatus" class="sub" aria-live="polite"></div>
+      <div class="alert alert-info" style="margin-top:14px">
+        Agent 协助：运行中的 agent 可以读取 <code>GET /api/ai/config</code>，用 <code>POST /api/ai/config</code> 写回配置，
+        用 <code>POST /api/ai/test</code> 做一次连通性测试。读取接口不会返回完整 API Key。
+      </div>
     </div>
   </div>
 

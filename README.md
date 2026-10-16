@@ -46,3 +46,33 @@
 正在完善功能：话术库：实现候选人回聊、追聊，要简历——简历入库。
 
 PS：需要接入ai api方可运作工作台，不需要工作台形式可以借助安装了的ai工具一步步执行。
+
+## 登录等待
+
+上游 `boss login` 打开登录页后会立即返回，不负责等待扫码。需要由 agent 等待时，请运行：
+
+```powershell
+node workbench\boss-login-wait.js
+```
+
+脚本会先检查登录态；未登录时打开登录窗口，并轮询 `boss list --unread` 直到登录成功（默认最多 10 分钟）。
+
+## boss-cli 推荐去重补丁
+
+上游推荐页的卡片根节点选择器会同时匹配嵌套节点，导致同一页输出重复。运行：
+
+```powershell
+node workbench\patch-boss-cli.js
+```
+
+补丁只修改本机安装的 `@joohw/boss-cli` 解析代码；执行 `boss update` 后请重新运行一次。
+
+## 未读列表增强
+
+`boss list --unread` 现在会：
+
+- 自动滚动 `.user-list`，直到列表连续两次不再增长；
+- 输出每条候选人的稳定 ID（`id:...`）；
+- 后续打开会话优先使用 `boss chat --id <稳定ID>`，避免新消息插入导致序号移动。
+
+补丁由 `node workbench\patch-boss-cli.js` 应用，`boss update` 后重新执行。

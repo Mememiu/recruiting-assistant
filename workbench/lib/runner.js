@@ -18,6 +18,12 @@ const os = require('os');
 const crypto = require('crypto');
 
 const IS_WIN = process.platform === 'win32';
+const SHELL_META = /[\r\n\0&|<>^%!"]/;
+function assertSafeArg(value, label = '参数') {
+  const s = String(value ?? '');
+  if (SHELL_META.test(s)) throw new Error(label + '包含 shell 元字符，已拒绝');
+  return s;
+}
 
 // ── 白名单：只允许这些
 const ALLOWED_SUBCOMMANDS = ['list', 'chat', 'recommend', 'search', 'greet', 'help', 'version', 'shutdown'];
@@ -46,7 +52,8 @@ function childEnv() {
     ? [path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm'),
        path.join(home, '.local', 'bin')]
     : [path.join(home, '.local', 'bin'), '/usr/local/bin', '/usr/bin', '/bin'];
-  return { ...process.env, PATH: [...new Set([...(process.env.PATH || '').split(sep), ...extra])].join(sep) };
+  const nodeDir = path.dirname(process.execPath);
+  return { ...process.env, PATH: [...new Set([...(process.env.PATH || '').split(sep), nodeDir, ...extra])].join(sep) };
 }
 
 /**
@@ -55,9 +62,24 @@ function childEnv() {
  * （Node 18.20.2+ 起的修复：不再把 .cmd/.bat 直接交给 CreateProcess），
  * 所以 Windows 走 cmd /c；POSIX 维持原样。
  */
-function runOne(cmd, timeoutMs = 60000) {
+function splitCmd(s) {
+  const out = [];
+  let cur = '';
+  let q = false;
+  for (const c of String(s)) {
+    if (c === '"') { q = !q; continue; }
+    if (c === ' ' && !q) { if (cur) { out.push(cur); cur = ''; } continue; }
+    cur += c;
+  }
+  if (q) throw new Error('命令引号未闭合，已拒绝');
+  if (cur) out.push(cur);
+  return out;
+}
+
+function runArgs(argv, timeoutMs = 60000) {
   return new Promise((resolve) => {
-    const parts = splitCmd(cmd);
+    const parts = argv.map((v) => assertSafeArg(v));
+    if (!parts.length) return resolve({ out: '', err: '命令为空', code: -1 });
     const bin = IS_WIN ? 'cmd' : parts[0];
     const args = IS_WIN ? ['/d', '/s', '/c', parts[0], ...parts.slice(1)] : parts.slice(1);
     const p = spawn(bin, args, { env: childEnv(), shell: false });
@@ -70,7 +92,29 @@ function runOne(cmd, timeoutMs = 60000) {
   });
 }
 
+function runOne(cmd, timeoutMs = 60000) {
+  try {
+    const parts = splitCmd(cmd);
+    for (const part of parts) assertSafeArg(part);
+    return runArgs(parts, timeoutMs);
+  } catch (e) {
+    return Promise.resolve({ out: '', err: String(e.message || e), code: -1 });
+  }
+}
+
+function runBoss(args, timeoutMs = 60000) {
+  return runArgs(['boss', ...args], timeoutMs);
+}
+
 function validate(cmd, task) {
+  try {
+    if (!String(cmd).startsWith('ai:')) {
+      const parts = splitCmd(cmd);
+      for (const part of parts) assertSafeArg(part);
+    }
+  } catch (e) {
+    return { ok: false, why: e.message };
+  }
   // 内部 AI 动作：不碰招聘平台，白名单不管它（它有自己的记录与确认）
   if (String(cmd).startsWith('ai:')) return { ok: true };
   // 仅未读沟通与简历任务可调用这个固定的只读截图动作，绝不放开通用 action。
@@ -89,19 +133,6 @@ function validate(cmd, task) {
 }
 
 /** 切命令：要认得引号，否则关键词里有空格会被拆成两个参数 */
-function splitCmd(s) {
-  const out = [];
-  let cur = '';
-  let q = false;
-  for (const c of String(s)) {
-    if (c === '"') { q = !q; continue; }
-    if (c === ' ' && !q) { if (cur) { out.push(cur); cur = ''; } continue; }
-    cur += c;
-  }
-  if (cur) out.push(cur);
-  return out;
-}
-
 function recognizeResume(file) {
   return new Promise((resolve) => {
     const p = spawn('swift', [path.join(__dirname, '..', 'bin', 'ocr-resume.swift'), file], { shell: false });
@@ -122,6 +153,14 @@ const report = require('./report');
 const { screen: aiScreen, loadCfg } = require('./ai');
 const { reviewResume, hardgateVerdict } = require('./resume-review');
 
+function chatArgs(item) {
+  return item.remoteId ? ['chat', '--id', item.remoteId] : ['chat', item.name];
+}
+
+function chatCommandString(item) {
+  return item.remoteId ? `boss chat --id "${item.remoteId}"` : `boss chat "${item.name}"`;
+}
+
 function unreadResumeTargets(ctx) {
   const role = String(ctx.opts.role || '');
   if (!role) throw new Error('请先选择一个应聘岗位。');
@@ -130,7 +169,7 @@ function unreadResumeTargets(ctx) {
 
 async function captureInboxResume(ctx, item, logs) {
   const current = ctx.inbox.chatTarget(item.id, item.signature);
-  const chat = await runOne(`boss chat "${current.name}"`, 60000);
+  const chat = await runBoss(chatArgs(current), 60000);
   if (chat.code !== 0) throw new Error(chat.err || '打开会话失败。');
   ctx.inbox.saveChat(current.id, current.signature, chat.out);
   logs.push(`已核对 ${current.name} · ${current.role} 的会话`);
@@ -170,7 +209,7 @@ async function captureInboxResume(ctx, item, logs) {
 function buildSearchCmd(ctx, s) {
   const kw = String(s.keyword || '').trim();
   if (!kw) return null;
-  return `boss search "${kw}"`;
+  return `boss search "${assertSafeArg(kw, '搜索关键词')}"`;
 }
 
 /** 打招呼候选名单：只按本机配置的评级阈值选已通过的推荐池人选。 */
@@ -234,7 +273,7 @@ const TASKS = {
       const cmd = buildSearchCmd(ctx, s);
       if (!cmd) { logs.push('没填关键词，未执行。'); return { ok: false }; }
       logs.push('$ ' + cmd);
-      const r = await runOne(cmd, 120000);
+      const r = await runBoss(['search', String(s.keyword || '').trim()], 120000);
       if (r.code !== 0 && !r.out.trim()) {
         logs.push('执行失败：' + (r.err || ('退出码 ' + r.code)));
         logs.push('（上游 search 只接受 [关键词]，不支持筛选参数；关键词含空格已自动加引号）');
@@ -271,7 +310,7 @@ const TASKS = {
       const job = (ctx.opts && ctx.opts.job) || ctx.targetRole || '';
       const cmd = job ? `boss recommend "${job}"` : 'boss recommend';
       logs.push('$ ' + cmd);
-      const r = await runOne(cmd, 120000);
+      const r = await runBoss(job ? ['recommend', job] : ['recommend'], 120000);
       if (r.code !== 0 && !r.out.trim()) {
         logs.push('执行失败：' + (r.err || ('退出码 ' + r.code)));
         return { ok: false };
@@ -321,12 +360,12 @@ const TASKS = {
         STATE.current = i + 1; STATE.total = targets.length;
         const cmd = `boss greet "${t.name}" --job "${t.role}"`;
         logs.push('$ ' + cmd);
-        let r = await runOne(cmd, 60000);
+        let r = await runBoss(['greet', t.name, '--job', t.role], 60000);
         let out = ((r.out || '') + ' ' + (r.err || ''));
         let bad = /失败|错误|error|未找到|无法|不存在/i.test(out);
         if (r.code !== 0 || bad) {
           await sleep(2000);
-          r = await runOne(cmd, 60000);   // 文档：偶发失败，重试一次
+          r = await runBoss(['greet', t.name, '--job', t.role], 60000);   // 文档：偶发失败，重试一次
           out = ((r.out || '') + ' ' + (r.err || ''));
           bad = /失败|错误|error|未找到|无法|不存在/i.test(out);
         }
@@ -479,7 +518,7 @@ const TASKS = {
     desc: '打开这位候选人的 BOSS 会话，核对姓名和岗位后查看在线简历，保存完整沟通、简历原图与本地初筛线索。打开会话可能使平台消息变为已读；不会发送消息或改变筛选状态。',
     plan(ctx) {
       const item = ctx.inbox.chatTarget(ctx.opts.id, ctx.opts.signature);
-      return [`boss chat "${item.name}"`, 'boss action resume'];
+      return [chatCommandString(item), 'boss action resume'];
     },
     async execute(ctx, logs) {
       const item = ctx.inbox.chatTarget(ctx.opts.id, ctx.opts.signature);
@@ -494,7 +533,7 @@ const TASKS = {
     desc: '先核对候选人姓名与沟通岗位，再打开 BOSS 在线简历并保存截图到当前工作区。平台可能记录一次简历查看；不会发送消息或改变筛选状态。',
     plan(ctx) {
       const item = ctx.inbox.chatTarget(ctx.opts.id, ctx.opts.signature);
-      return [`boss chat "${item.name}"`, 'boss action resume'];
+      return [chatCommandString(item), 'boss action resume'];
     },
     async execute(ctx, logs) {
       const item = ctx.inbox.chatTarget(ctx.opts.id, ctx.opts.signature);
@@ -507,7 +546,7 @@ const TASKS = {
     label: '批量查看本岗在线简历',
     desc: '逐人核对姓名和岗位，只读取当前岗位待处理且尚无简历的人选。打开会话可能使消息变已读，在线简历可能占用平台查看次数。失败者会跳过；不发消息、不改筛选状态。',
     plan(ctx) {
-      return unreadResumeTargets(ctx).flatMap((item) => [`boss chat "${item.name}"`, 'boss action resume']);
+      return unreadResumeTargets(ctx).flatMap((item) => [chatCommandString(item), 'boss action resume']);
     },
     async execute(ctx, logs) {
       const targets = unreadResumeTargets(ctx);
@@ -554,7 +593,7 @@ const TASKS = {
         const name = row[iName];
         STATE.current = i + 1;
         STATE.total = targets.length;
-        const r = await runOne(`boss chat "${name}"`, 45000);
+        const r = await runBoss(['chat', name], 45000);
         if (r.code !== 0 && !r.out.trim()) { failed++; logs.push(`${name}：执行失败`); continue; }
         const m = r.out.match(/基本信息:\s*(.+)/);
         if (!m) { failed++; logs.push(`${name}：没读到「基本信息」（可能未登录或页面变了）`); continue; }
@@ -576,8 +615,12 @@ const TASKS = {
 // ── 票据
 
 function issueTicket(task, ctx) {
-  const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  TICKETS.set(token, { task, ctx, created: Date.now(), used: false });
+  const now = Date.now();
+  for (const [token, ticket] of TICKETS) {
+    if (now - ticket.created > TICKET_TTL) TICKETS.delete(token);
+  }
+  const token = crypto.randomUUID();
+  TICKETS.set(token, { task, ctx, created: now, used: false });
   return token;
 }
 

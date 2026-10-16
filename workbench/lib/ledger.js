@@ -33,6 +33,7 @@ function parseCSV(text) {
       else if (c !== '\r') field += c;
     }
   }
+  if (inQ) throw new Error('CSV 引号未闭合，已停止读取');
   if (field !== '' || row.length) { row.push(field); rows.push(row); }
   return rows.filter((r) => r.length > 1 || r[0] !== '');
 }
@@ -56,14 +57,13 @@ class Ledger {
   read() {
     if (!fs.existsSync(this.file)) throw new Error('台账文件不存在: ' + this.file);
     const raw = fs.readFileSync(this.file, 'utf8');
-    const rows = parseCSV(raw);
-    if (!rows.length) throw new Error('台账为空');
-    const header = rows[0];
-    const data = rows.slice(1).map((r) => {
-      while (r.length < header.length) r.push('');
-      return r.slice(0, header.length);
-    });
-    return { header, rows: data };
+    const [header, ...rows] = parseCSV(raw);
+    if (!header) throw new Error('台账为空');
+    if (rows.some((r) => r.length !== header.length)) throw new Error('台账列数或列名异常，已停止读取，请先检查原文文件');
+    if (new Set(header).size !== header.length || rows.some((r) => r.length !== header.length)) {
+      throw new Error('台账列数或列名异常，已停止读取，请先检查原文文件');
+    }
+    return { header, rows };
   }
 
   readStrict() {
