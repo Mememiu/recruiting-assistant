@@ -146,3 +146,33 @@ boss shutdown       # 关 Boss 的浏览器（名字不是 quit —— 交互模
   会误判"空/卡住"；要么前台跑给足超时，要么全量落文件事后再筛。
 - **平台改版高频**：选择器失效、新弹层出现是常态。命令报错先升级 CLI（`npm update -g`），
   再看是不是平台改版，别自己写浏览器脚本硬闯。
+
+## 登录等待
+
+上游 `boss login` 不等待人工扫码。agent 需要等待时使用：
+
+```bash
+node workbench/boss-login-wait.js
+```
+
+脚本验证成功后才返回；不要自行 sleep/poll。
+
+## 推荐列表去重
+
+上游推荐页卡片根节点选择器可能把嵌套节点算成两张卡片，导致同名重复。安装或更新 boss-cli 后运行：
+
+```bash
+node workbench/patch-boss-cli.js
+```
+
+补丁会过滤被其他根节点包含的子节点，只保留真正的卡片。
+
+## 未读列表增强
+
+补丁后的 `boss list --unread` 会滚动加载列表，并输出稳定 ID。后续打开会话优先使用：
+
+```bash
+boss chat --id <稳定ID> --unread
+```
+
+稳定 ID 仍需在执行前确认对应候选人；如果消息或列表发生变化，工作台会通过 inbox signature 拒绝继续操作。

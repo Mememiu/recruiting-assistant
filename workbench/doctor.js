@@ -27,7 +27,8 @@ function childEnv() {
     ? [path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm'),
        path.join(home, '.local', 'bin')]
     : [path.join(home, '.local', 'bin'), '/usr/local/bin', '/usr/bin', '/bin'];
-  return { ...process.env, PATH: [...new Set([...(process.env.PATH || '').split(sep), ...extra])].join(sep) };
+  const nodeDir = path.dirname(process.execPath);
+  return { ...process.env, PATH: [...new Set([...(process.env.PATH || '').split(sep), nodeDir, ...extra])].join(sep) };
 }
 
 // ── 与 runner.js 一致的跨平台执行

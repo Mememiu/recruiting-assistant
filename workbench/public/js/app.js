@@ -32,7 +32,7 @@ async function load() {
   $('#dataHome').textContent = cfg.dataHome;
 
   const led = await (await fetch('/api/ledger')).json();
-  if (!led.ok) { $('#stats').innerHTML = `<div class="alert alert-danger">${led.error}</div>`; return; }
+  if (!led.ok) { $('#stats').innerHTML = `<div class="alert alert-danger">${esc(led.error)}</div>`; return; }
   HEADER = led.header; ROWS = led.rows;
 
   HIDDEN = new Set(HEADER.filter((h) => !CORE_COLS.includes(h)));
@@ -45,6 +45,7 @@ async function load() {
   loadTasks();
   loadFreshness();
   loadUsage();
+  loadAiConfig();
   loadReports();
   loadToday();
   await loadInbox();
@@ -666,6 +667,117 @@ $('#aiBtn').addEventListener('click', async () => {
     btn.disabled = false;
     btn.textContent = 'AI 初筛建议';
   }
+});
+
+// ── AI API 配置（OpenAI 兼容接口）
+let AI_CONFIG = null;
+function aiConfigStatus(text, isError = false) {
+  const el = $('#aiConfigStatus');
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.color = isError ? 'var(--danger-dark, #b91c1c)' : 'var(--gray-500)';
+}
+function aiConfigPayload() {
+  const payload = {
+    baseUrl: $('#aiBaseUrl').value.trim(),
+    model: $('#aiModel').value.trim(),
+    cheapModel: $('#aiCheapModel').value.trim(),
+    reasoningEffort: $('#aiReasoningEffort').value,
+    timeoutMs: Math.max(1, Math.min(600, Number($('#aiTimeoutSec').value) || 120)) * 1000,
+    temperature: Math.max(0, Math.min(2, Number($('#aiTemperature').value) || 0)),
+    minStars: $('#aiMinStars').value ? Number($('#aiMinStars').value) : null,
+  };
+  const key = $('#aiApiKey').value.trim();
+  if (key) payload.apiKey = key;
+  return payload;
+}
+async function loadAiConfig() {
+  if (!$('#aiBaseUrl')) return;
+  try {
+    const r = await (await fetch('/api/ai/config')).json();
+    if (!r.ok) { aiConfigStatus(r.error || '读取配置失败', true); return; }
+    AI_CONFIG = r;
+    $('#aiBaseUrl').value = r.ai.baseUrl || '';
+    $('#aiModel').value = r.ai.model || '';
+    $('#aiCheapModel').value = r.ai.cheapModel || '';
+    $('#aiReasoningEffort').value = r.ai.reasoningEffort || '';
+    $('#aiTimeoutSec').value = Math.round((r.ai.timeoutMs || 120000) / 1000);
+    $('#aiTemperature').value = r.ai.temperature ?? 0.2;
+    $('#aiMinStars').value = r.outreach.minStars == null ? '' : String(r.outreach.minStars);
+    $('#aiClearKeyBtn').hidden = !r.ai.apiKeyConfigured;
+    $('#aiApiKey').placeholder = r.ai.apiKeyConfigured ? ('已配置：' + r.ai.apiKeyHint + '，留空保持不变') : 'your-api-key';
+    aiConfigStatus(r.ai.apiKeyConfigured ? '已保存 API Key；请在保存后测试连接。' : '尚未配置 API Key。');
+  } catch (e) { aiConfigStatus(e.message || '读取配置失败', true); }
+}
+let AI_MODELS = [];
+function renderAiModelDatalists() {
+  const freeOnly = !!$('#aiFreeOnly')?.checked;
+  const visible = AI_MODELS.filter((m) => !freeOnly || m.free);
+  const options = visible.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}${m.free ? ' · 免费' : ''}${m.contextLength ? ` · ${m.contextLength} ctx` : ''}</option>`).join('');
+  const main = $('#aiModelList');
+  const cheap = $('#aiCheapModelList');
+  if (main) main.innerHTML = options;
+  if (cheap) cheap.innerHTML = options;
+}
+async function fetchAiModels() {
+  if (!$('#aiModelsBtn')) return;
+  const btn = $('#aiModelsBtn');
+  const baseUrl = $('#aiBaseUrl').value.trim();
+  const apiKey = $('#aiApiKey').value.trim();
+  if (!baseUrl) { aiConfigStatus('请先填写 API 地址，再获取模型', true); return; }
+  btn.disabled = true;
+  aiConfigStatus('正在获取可用模型…');
+  try {
+    const r = await (await fetch('/api/ai/models', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl, ...(apiKey ? { apiKey } : {}) }),
+    })).json();
+    if (!r.ok) throw new Error(r.error || '获取模型失败');
+    AI_MODELS = r.models || [];
+    renderAiModelDatalists();
+    const freeCount = AI_MODELS.filter((m) => m.free).length;
+    aiConfigStatus(`已获取 ${AI_MODELS.length} 个模型（其中 ${freeCount} 个免费/零价格），在模型输入框中选择即可。`);
+  } catch (e) { aiConfigStatus(e.message || '获取模型失败', true); }
+  finally { btn.disabled = false; }
+}
+$('#aiModelsBtn')?.addEventListener('click', fetchAiModels);
+$('#aiFreeOnly')?.addEventListener('change', renderAiModelDatalists);
+async function saveAiConfig(testAfter = false) {
+  if (!$('#aiBaseUrl')) return null;
+  const btn = testAfter ? $('#aiTestBtn') : $('#aiSaveBtn');
+  btn.disabled = true;
+  aiConfigStatus('保存中…');
+  try {
+    const body = aiConfigPayload();
+    const r = await (await fetch('/api/ai/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(testAfter ? { config: body } : body),
+    })).json();
+    if (!r.ok) throw new Error(r.error || '保存失败');
+    await loadAiConfig();
+    aiConfigStatus('配置已保存。');
+    if (!testAfter) return null;
+    aiConfigStatus('正在测试连接…');
+    const t = await (await fetch('/api/ai/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: body }),
+    })).json();
+    if (!t.ok) throw new Error(t.error || '连接测试失败');
+    aiConfigStatus('连接成功：' + (t.content || '').slice(0, 120) + '（模型 ' + (t.model || '未知') + '）');
+    return t;
+  } catch (e) { aiConfigStatus(e.message || '保存失败', true); return null; }
+  finally { btn.disabled = false; }
+}
+$('#aiSaveBtn')?.addEventListener('click', () => saveAiConfig(false));
+$('#aiTestBtn')?.addEventListener('click', () => saveAiConfig(true));
+$('#aiClearKeyBtn')?.addEventListener('click', async () => {
+  if (!AI_CONFIG?.ai?.apiKeyConfigured) return;
+  if (!confirm('确定清除本机保存的 AI API Key？')) return;
+  const btn = $('#aiClearKeyBtn'); btn.disabled = true;
+  try {
+    const r = await (await fetch('/api/ai/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: '', clearApiKey: true }) })).json();
+    if (!r.ok) throw new Error(r.error || '清除失败');
+    await loadAiConfig(); aiConfigStatus('API Key 已清除。');
+  } catch (e) { aiConfigStatus(e.message || '清除失败', true); }
+  finally { btn.disabled = false; }
 });
 
 /** 极简 Markdown 渲染（够读档案就行，不引第三方库） */

@@ -37,17 +37,20 @@ function parseUnread(raw) {
     const rest = line[3];
     const messageAt = rest.indexOf('｜消息:');
     const meta = (messageAt >= 0 ? rest.slice(0, messageAt) : rest).split('｜');
-    const role = /^(未读|时间|消息):/.test(meta[0]) ? '' : meta.shift().trim();
+    const role = /^(未读|时间|消息|id):/.test(meta[0]) ? '' : meta.shift().trim();
     const unread = meta.find((s) => /^未读:\d+$/.test(s));
+    const remoteId = (meta.find((s) => s.startsWith('id:')) || '').slice(3).trim();
     if (!name || !unread) throw new Error('未读明细缺少姓名或未读数量，未修改待办或台账。');
     const time = (meta.find((s) => s.startsWith('时间:')) || '').slice(3);
     const message = messageAt >= 0 ? rest.slice(messageAt + 4).trim() : '';
-    const id = personKey(name, role);
-    return { id, name, role, unread: Number(unread.slice(3)), time, message,
+    const legacyId = personKey(name, role);
+    const id = remoteId ? hash(JSON.stringify(['remote', remoteId])) : legacyId;
+    return { id, legacyId, remoteId, name, role, unread: Number(unread.slice(3)), time, message,
       signature: hash(JSON.stringify([id, time, message, unread])), handled: false };
   });
   if (items.length !== total) throw new Error(`列表声称 ${total} 人，但仅解析到 ${items.length} 人。请重新拉取。`);
-  if (new Set(items.map((i) => i.id)).size !== items.length) throw new Error('列表中存在同名同岗，无法可靠区分。请在 BOSS 核实后再整理。');
+  const identityKeys = items.map((i) => i.remoteId ? 'remote:' + i.remoteId : i.id);
+  if (new Set(identityKeys).size !== items.length) throw new Error('列表中存在同名同岗且缺少稳定 ID，无法可靠区分。请在 BOSS 核实后再整理。');
   return items;
 }
 
@@ -142,7 +145,11 @@ class Inbox {
       rows.push(header.map((h) => values[h] || '')); added++;
     }
     if (added) this.ledger.write(header, rows);
-    const previous = new Map([...(state.archive || []), ...state.items].map((i) => [i.id, i]));
+    const previous = new Map();
+    for (const old of [...(state.archive || []), ...state.items]) {
+      previous.set(old.id, old);
+      previous.set(personKey(old.name, old.role), old);
+    }
     const current = items.map((item) => {
       item.signature = hash(source.slice(0, 8) + ':' + item.signature);
       const old = previous.get(item.id);
