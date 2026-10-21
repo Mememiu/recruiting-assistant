@@ -192,16 +192,27 @@ function patchPreviewNavigate() {
             }`;
   const neu = `            else {
                 // PREVIEW_AUTO_NAV_PATCH：每条命令都是独立进程，页面常落在 /web/chat/index；
-                // 先导航到推荐页再读，否则 preview 永远拿不到「当前已在推荐页」的前置状态。
-                await page.goto('https://www.zhipin.com/web/chat/recommend', { waitUntil: 'load', timeout: 60000 });
-                const frame = await assertRecommendPageReadyForPreview(page);
-                jobLine = '当前岗位：当前推荐列表';
-                savedOriginal = await snapshotBossPageViewport(page);
-                opened = await openRecommendResumePreview(frame, target);
+                // 先导航到推荐页再读。goto 后 iframe 仍在重建，取 frame 常抛 "frame got detached"，
+                // 所以这里带退避重试；waitUntil 用 networkidle2，等 SPA 渲染稳定再动手。
+                await page.goto('https://www.zhipin.com/web/chat/recommend', { waitUntil: 'networkidle2', timeout: 60000 });
+                let lastErr;
+                for (let attempt = 0; attempt < 3 && !opened; attempt++) {
+                    if (attempt > 0) await new Promise((r) => setTimeout(r, 1200 * attempt));
+                    try {
+                        const frame = await assertRecommendPageReadyForPreview(page);
+                        jobLine = '当前岗位：当前推荐列表';
+                        savedOriginal = await snapshotBossPageViewport(page);
+                        opened = await openRecommendResumePreview(frame, target);
+                    } catch (e) {
+                        lastErr = e;
+                        if (!/detached|Execution context/i.test(String(e && e.message))) throw e;
+                    }
+                }
+                if (!opened && lastErr) throw lastErr;
             }`;
   if (!s.includes(old)) throw new Error('preview.js: 未找到「不在列表页」的回退分支，版本可能又变了');
   fs.writeFileSync(f, s.replace(old, neu), 'utf8');
-  console.log('preview.js: 已支持自动导航到推荐页（原为直接报错）');
+  console.log('preview.js: 已支持自动导航到推荐页（原为直接报错，含 detach 重试）');
 }
 
 function patchPreviewByIndex() {
@@ -230,6 +241,96 @@ function patchPreviewByIndex() {
   if (!s.includes(old)) throw new Error('recommend.js: 未找到按姓名取卡片的代码块');
   fs.writeFileSync(f, s.replace(old, neu), 'utf8');
   console.log('recommend.js: preview 支持 "#N" 按位置读取');
+}
+
+function patchPreviewBatch() {
+  const f = file('toolset/preview.js');
+  let s = fs.readFileSync(f, 'utf8');
+  if (s.includes('PREVIEW_BATCH_PATCH')) return;
+
+  // 1) runPreview 开头识别范围语法 "#1..#5" → 走批量路径
+  const head = `    const target = options.candidateTarget.trim();
+    if (!target) {
+        throw new Error('请提供候选人姓名。');
+    }`;
+  const headNew = `    const target = options.candidateTarget.trim();
+    if (!target) {
+        throw new Error('请提供候选人姓名。');
+    }
+    // PREVIEW_BATCH_PATCH：#A..#B 范围语法 → 一次会话内连续读取（跨命令列表会重排，顺序不可靠）
+    {
+        const range = target.match(/^#(\\d+)\\s*\\.\\.\\s*#?(\\d+)$/);
+        if (range) {
+            return runPreviewBatch({ from: Number(range[1]), to: Number(range[2]), ocr: options.ocr });
+        }
+    }`;
+  if (!s.includes(head)) throw new Error('preview.js: 未找到 runPreview 开头，版本可能又变了');
+  s = s.replace(head, headNew);
+
+  // 2) 文件末尾追加 runPreviewBatch
+  const fn = `
+// PREVIEW_BATCH_PATCH：一次浏览器会话内连续读取推荐页第 from..to 位的在线简历。
+// 为什么必须批量：每条 CLI 命令都是独立进程，会重新加载推荐列表，列表顺序每次不同，
+// 所以跨命令的 "#N" 无法保证是同一份列表的第 N 位。同一次加载里逐个打开才能保证顺序。
+export async function runPreviewBatch(opts) {
+    const from = Math.max(1, Number(opts.from) || 1);
+    const to = Math.max(from, Number(opts.to) || from);
+    const cap = Math.min(to - from + 1, 50);
+    return await withBossSessionPage(async (page) => {
+        await page.goto('https://www.zhipin.com/web/chat/recommend', { waitUntil: 'networkidle2', timeout: 60000 });
+        const frame = await assertRecommendPageReadyForPreview(page);
+        ensureAppDataLayout();
+        const items = [];
+        for (let i = 0; i < cap; i++) {
+            const pos = from + i;
+            let opened = false;
+            try {
+                opened = await openRecommendResumePreview(frame, '#' + pos);
+            } catch (e) {
+                items.push({ index: pos, ok: false, error: String((e && e.message) || e) });
+                continue;
+            }
+            if (!opened) break; // 列表到头了
+            const outcome = await waitForCResumeIframeOrPaywall(page, ONLINE_RESUME_IFRAME_WAIT_MAX_MS);
+            if (outcome !== 'iframe') {
+                const paywall = await describeBossPaywallPopupIfPresent(page);
+                await closeBossPaywallPopupIfPresent(page);
+                items.push({ index: pos, ok: false, error: paywall || '点击后未出现在线简历 iframe' });
+                await closeCResumePanel(page).catch(() => { });
+                continue;
+            }
+            const ready = await waitForVisibleCResumeIframeReady(page);
+            if (!ready) {
+                await closeCResumePanel(page).catch(() => { });
+                items.push({ index: pos, ok: false, error: '在线简历 iframe 未渲染完成' });
+                continue;
+            }
+            const fileName = 'preview-batch-' + pos + '-' + Date.now() + '.png';
+            const absPath = join(RESUME_SCREENSHOTS_DIR, fileName);
+            let saved;
+            try {
+                saved = await snapshotBossPageViewport(page);
+                const ok = await captureCResumeIframeToFile(page, saved, absPath);
+                items.push({ index: pos, ok: !!ok, file: ok ? absPath : null, error: ok ? null : '截图失败' });
+            } catch (e) {
+                items.push({ index: pos, ok: false, error: String((e && e.message) || e) });
+            }
+            await closeCResumePanel(page).catch(() => { });
+        }
+        // CLI 外层把返回值当字符串处理（text.trimEnd()），必须回字符串而不是数组
+        return [
+            '批量简历预览（一次会话内连续读取，顺序 = 列表第 ' + from + '..' + to + ' 位）：',
+            ...items.map((it) => it.ok
+                ? '[' + it.index + '] 简历预览截图：' + it.file
+                : '[' + it.index + '] 失败：' + it.error),
+            '共读取 ' + items.filter((x) => x.ok).length + ' / ' + items.length + ' 份。',
+        ].join('\\n');
+    });
+}
+`;
+  s = s + '\n' + fn;
+  fs.writeFileSync(f, s, 'utf8');
+  console.log('preview.js: 新增 #A..#B 批量读取（单会话内连续，顺序可靠）');
 }
 
 function patchChatById() {
@@ -269,11 +370,11 @@ function patchChatById() {
 function main() {
   // 每个补丁独立生效：上游改版导致某一段匹配不上时，不应该阻塞其余补丁。
   const steps = [
-    ['滚动加载', patchList],
     ['列表虚拟化', patchListVirtualization],
     ['推荐去重', patchRecommend],
     ['预览自动导航', patchPreviewNavigate],
     ['预览按位置', patchPreviewByIndex],
+    ['预览批量读取', patchPreviewBatch],
     ['稳定 ID', patchChatById],
   ];
   const failed = [];

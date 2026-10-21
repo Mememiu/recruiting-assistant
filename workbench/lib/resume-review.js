@@ -56,7 +56,7 @@ function graduationRule(context, role) {
       String(role || '').includes(row[0].replace(/^毕业届别[（(]/, '').replace(/[）)]$/, '')))?.[1] || '';
 }
 
-function hardgateVerdict({ role, info, dataHome }) {
+function hardgateVerdict({ role, info, resume, dataHome }) {
   const { context } = readLocalStandards(dataHome, role);
   const rules = ruleRows(context, /^##\s*三、/);
   const education = rules.find((row) => row[0] === '学历线')?.[1] || '';
@@ -65,10 +65,27 @@ function hardgateVerdict({ role, info, dataHome }) {
   }
   const required = graduationRule(context, role);
   const allowed = [...required.matchAll(/20\d{2}/g)].map((m) => Number(m[0]));
+  if (!allowed.length) return '待核';
+
+  // ① 基本信息里的届别标注（"27年应届生"）——最快，优先用。
   const found = String(info || '').match(/(?:^|\D)((?:20)?\d{2})\s*(?:年应届生|届)/);
-  if (!allowed.length || !found) return '待核';
-  const year = Number(found[1].length === 2 ? '20' + found[1] : found[1]);
-  return allowed.includes(year) ? '通过' : '不符';
+  if (found) {
+    const year = Number(found[1].length === 2 ? '20' + found[1] : found[1]);
+    return allowed.includes(year) ? '通过' : '不符';
+  }
+
+  // ② 回落：看教育栏的毕业时间。
+  //    届别以毕业时间为准，不看"在校/在职/工龄"标签——"1年以内·在职"的可能是实习中的 2027 届，
+  //    "在校"的也可能是延期毕业的往届生。基本信息没写届别时（李文希这类），必须去教育栏核。
+  const text = String(resume || '');
+  if (text) {
+    const gradYears = [...text.matchAll(/(20\d{2})\s*年?\s*(?:毕业|应届|离校)/g)].map((m) => Number(m[1]));
+    const rangeEnds = [...text.matchAll(/20\d{2}\s*[-—–至~]\s*(20\d{2})/g)].map((m) => Number(m[1]));
+    const year = gradYears.length ? Math.max(...gradYears)
+      : (rangeEnds.length ? Math.max(...rangeEnds) : null);
+    if (year != null) return allowed.includes(year) ? '通过' : '不符';
+  }
+  return '待核';
 }
 
 function reviewResume({ role, resume, conversation, dataHome }) {
