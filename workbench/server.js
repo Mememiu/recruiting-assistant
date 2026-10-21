@@ -4,7 +4,7 @@
  *
  * 三条不可协商的规则，改代码时别破坏：
  *  1. 只监听 127.0.0.1 —— 同一 WiFi 下别人也访问不到
- *  2. 平台读取任务须经过一次性确认；不提供打招呼或点不合适接口
+ *  2. 平台读取/执行任务须经过一次性票据确认；不提供点不合适的接口
  *  3. 改台账前必先备份（在 lib/ledger.js 的 backup() 里）
  *
  * 启动：node server.js
@@ -160,8 +160,15 @@ function sendJSON(res, code, obj) {
   res.end(body);
 }
 
+/** decodeURIComponent 对非法转义（如 /%）会抛 URIError；在请求处理器里抛 = 整个进程退出 */
+function safeDecode(s) {
+  try { return decodeURIComponent(s); } catch { return null; }
+}
+
 function serveStatic(req, res, urlPath) {
-  let rel = decodeURIComponent(urlPath.split('?')[0]);
+  const decoded = safeDecode(urlPath.split('?')[0]);
+  if (decoded === null) { res.writeHead(400); return res.end('bad request'); }
+  let rel = decoded;
   if (rel === '/' || rel === '') rel = '/index.html';
   const target = path.normalize(path.join(PUBLIC, rel));
   const publicRoot = path.resolve(PUBLIC);
@@ -226,6 +233,19 @@ function listCandidates() {
 }
 
 const server = http.createServer((req, res) => {
+  try {
+    route(req, res);
+  } catch (e) {
+    // 请求处理器里任何未预料的异常都不能杀死进程（曾经 decodeURIComponent 就崩过）：回 500，继续服务
+    console.error('请求处理异常:', e);
+    try {
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('服务器内部错误');
+    } catch { /* 响应已发出就不管了 */ }
+  }
+});
+
+function route(req, res) {
   const u = req.url;
 
   // ── API
@@ -319,7 +339,8 @@ const server = http.createServer((req, res) => {
     }
 
     if (u.startsWith('/api/candidate?')) {
-      const name = decodeURIComponent(new URL(u, 'http://x').searchParams.get('name') || '');
+      // searchParams.get() 已解码过；二次 decodeURIComponent 会把名字里合法的 % 当成非法转义抛错
+      const name = new URL(u, 'http://x').searchParams.get('name') || '';
       const file = safeFileIn(cfg.interviewDir, name);
       if (!file || !fs.existsSync(file)) {
         return sendJSON(res, 404, { ok: false, error: '档案不存在' });
@@ -331,6 +352,8 @@ const server = http.createServer((req, res) => {
       if (!allowMutation(req)) return sendJSON(res, 403, { ok: false, error: '跨源请求已拒绝' });
       readBody(req, (body) => {
         try {
+          // 与 inbox/removals 接口一致：任务运行中会整表写回台账，此时编辑会被覆盖
+          if (runner.getState().running) throw new Error('有任务正在执行，结束后再修改台账。');
           const { name, col, value, id } = JSON.parse(body || '{}');
           if (!name || !col) throw new Error('缺少 name 或 col');
           const r = ledger.updateCell(String(name), String(col), String(value ?? ''), id);
@@ -539,7 +562,7 @@ const server = http.createServer((req, res) => {
       return sendJSON(res, 200, { ok: true, items: report.list(cfg) });
     }
     if (u.startsWith('/api/report/read?')) {
-      const name = decodeURIComponent(new URL(u, 'http://x').searchParams.get('name') || '');
+      const name = new URL(u, 'http://x').searchParams.get('name') || '';
       const file = safeFileIn(path.join('runtime', 'reports'), name);
       if (!file || !fs.existsSync(file)) return sendJSON(res, 404, { ok: false, error: '没有这份日报' });
       return sendJSON(res, 200, { ok: true, name, content: fs.readFileSync(file, 'utf8') });
@@ -558,6 +581,20 @@ const server = http.createServer((req, res) => {
 
   // ── 静态页面
   serveStatic(req, res, u);
+}
+
+// 端口被占用时给一句人话：自启动场景下最常见的就是「已经跑着一个，又双击了一次 start.bat」
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.log('');
+    console.log(`  端口 ${cfg.port} 已被占用 —— 工作台可能已经在运行了。`);
+    console.log(`  先在浏览器打开 http://${cfg.host}:${cfg.port} 看看；`);
+    console.log('  如果确实没有，改 config.json 的 port 换个端口，或结束占用该端口的进程后重试。');
+    console.log('');
+    process.exit(1);
+  }
+  console.error('服务启动失败：', e);
+  process.exit(1);
 });
 
 server.listen(cfg.port, cfg.host, () => {

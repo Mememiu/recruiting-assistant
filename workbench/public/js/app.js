@@ -141,7 +141,6 @@ async function loadCockpit() {
       <span style="color:var(--gray-400)">${i + 1}.</span>
       <b>${esc(KIND_LABEL[a.kind] || a.kind)}</b>
       <span style="color:var(--gray-500)">[${esc(a.role)}]</span>
-      ${a.free ? '' : '<span style="color:#b45309">⚠️ 消耗额度</span>'}<br>
       <span style="color:var(--gray-600)">${esc(a.why)}</span><br>
       <span style="color:var(--gray-400);font-size:12px">对话里说：</span><code style="font-size:12px">${esc(a.say)}</code>
       ${goto ? ` <a href="javascript:void(0)" data-goto="${esc(a.kind)}" style="font-size:12px">→ 在工作台打开</a>` : ''}</div>`;
@@ -152,7 +151,7 @@ async function loadCockpit() {
 
   box.innerHTML = warnHtml + roleHtml
     + `<div style="margin-top:10px;padding-top:8px;border-top:2px solid var(--gray-200)">
-       <div style="font-size:13px;color:var(--gray-500);margin-bottom:4px">建议顺序（免费优先）：</div>${actionHtml}</div>`;
+       <div style="font-size:13px;color:var(--gray-500);margin-bottom:4px">建议顺序：</div>${actionHtml}</div>`;
 
   box.querySelectorAll('[data-goto]').forEach((el) => {
     el.addEventListener('click', () => { const f = KIND_GOTO[el.dataset.goto]; if (f) f(); });
@@ -844,7 +843,7 @@ async function loadTasks() {
             ${roles.map((x) => `<option>${esc(x)}</option>`).join('')}
           </select>
         </div>
-        <div class="thint">拉列表免费；看完挑最对口的再花简历额度，别见一个开一个。</div>` : ''}
+        <div class="thint">拉列表后先看清单，挑最对口的再打开简历。</div>` : ''}
       <button class="btn btn-primary btn-sm" data-task="${esc(t.id)}">预览并确认</button>
     </div>`).join('');
 }

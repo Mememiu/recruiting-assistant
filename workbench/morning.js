@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { Ledger, toCSV } = require('./lib/ledger');
+const { Ledger } = require('./lib/ledger');
 const { Inbox } = require('./lib/inbox');
 const runner = require('./lib/runner');
 const report = require('./lib/report');
@@ -39,8 +39,8 @@ const ctx = {
   readLedger: () => ledger.read(),
   stats: () => ledger.stats(),
   writeLedger: (header, rows) => {
-    ledger.backup();
-    fs.writeFileSync(ledger.file, toCSV([header, ...rows]), 'utf8');
+    // 与 server.js 一致：走 ledger.write（列数校验 + 原子替换 + 先备份），别裸写
+    ledger.write(header, rows);
   },
 };
 

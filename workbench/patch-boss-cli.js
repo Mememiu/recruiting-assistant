@@ -166,12 +166,70 @@ function patchList() {
 function patchRecommend() {
   const f = file('toolset/recommend.js');
   let s = fs.readFileSync(f, 'utf8');
-  const old = '    const cards = Array.from(document.querySelectorAll(cardSel));';
-  const neu = '    const allCards = Array.from(document.querySelectorAll(cardSel));\n    const cards = allCards.filter((item) => !allCards.some((other) => other !== item && other.contains(item)));';
-  if (!s.includes('const allCards = Array.from(document.querySelectorAll(cardSel));') && s.includes(old)) {
-    s = s.replace(old, neu);
-    fs.writeFileSync(f, s, 'utf8');
-  }
+  if (s.includes('const allCards = Array.from(document.querySelectorAll(cardSel));')) return;
+  // 0.6.6 起缩进是 6 空格（模板字符串内），旧补丁按 4 空格匹配会静默失效。
+  // 用行首缩进正则兜住任意缩进，并替换全部出现（读列表 / greet 定位 / preview 定位都受益）。
+  const re = /^([ \t]*)const cards = Array\.from\(document\.querySelectorAll\(cardSel\)\);$/gm;
+  let hit = 0;
+  s = s.replace(re, (line, indent) => {
+    hit++;
+    return [
+      `${indent}const allCards = Array.from(document.querySelectorAll(cardSel));`,
+      `${indent}const cards = allCards.filter((item) => !allCards.some((other) => other !== item && other.contains(item)));`,
+    ].join('\n');
+  });
+  if (!hit) throw new Error('recommend.js: 没找到卡片选择语句，版本可能又变了');
+  fs.writeFileSync(f, s, 'utf8');
+  console.log(`recommend.js: 去重补丁已应用到 ${hit} 处`);
+}
+
+function patchPreviewNavigate() {
+  const f = file('toolset/preview.js');
+  let s = fs.readFileSync(f, 'utf8');
+  if (s.includes('PREVIEW_AUTO_NAV_PATCH')) return;
+  const old = `            else {
+                throw new Error('当前不在推荐列表页、深度搜索页或常规搜索页，无法预览候选人。');
+            }`;
+  const neu = `            else {
+                // PREVIEW_AUTO_NAV_PATCH：每条命令都是独立进程，页面常落在 /web/chat/index；
+                // 先导航到推荐页再读，否则 preview 永远拿不到「当前已在推荐页」的前置状态。
+                await page.goto('https://www.zhipin.com/web/chat/recommend', { waitUntil: 'load', timeout: 60000 });
+                const frame = await assertRecommendPageReadyForPreview(page);
+                jobLine = '当前岗位：当前推荐列表';
+                savedOriginal = await snapshotBossPageViewport(page);
+                opened = await openRecommendResumePreview(frame, target);
+            }`;
+  if (!s.includes(old)) throw new Error('preview.js: 未找到「不在列表页」的回退分支，版本可能又变了');
+  fs.writeFileSync(f, s.replace(old, neu), 'utf8');
+  console.log('preview.js: 已支持自动导航到推荐页（原为直接报错）');
+}
+
+function patchPreviewByIndex() {
+  const f = file('toolset/recommend.js');
+  let s = fs.readFileSync(f, 'utf8');
+  if (s.includes('PREVIEW_BY_INDEX_PATCH')) return;
+  const old = `    const targetCard = cards.find((item) => {
+      const name =
+        norm(item.querySelector(".name-wrap .name")?.textContent) ||
+        norm(item.querySelector(".name")?.textContent);
+      return name === raw || name.includes(raw);
+    }) ?? null;`;
+  const neu = `    let targetCard = null;
+    // PREVIEW_BY_INDEX_PATCH：推荐列表跨命令会重排，按姓名不可靠；支持 "#1" 按位置取卡片
+    const isIdx = raw.length > 1 && raw[0] === "#" && /^[0-9]+$/.test(raw.slice(1));
+    if (isIdx) {
+      targetCard = cards[Number(raw.slice(1)) - 1] ?? null;
+    } else {
+      targetCard = cards.find((item) => {
+        const name =
+          norm(item.querySelector(".name-wrap .name")?.textContent) ||
+          norm(item.querySelector(".name")?.textContent);
+        return name === raw || name.includes(raw);
+      }) ?? null;
+    }`;
+  if (!s.includes(old)) throw new Error('recommend.js: 未找到按姓名取卡片的代码块');
+  fs.writeFileSync(f, s.replace(old, neu), 'utf8');
+  console.log('recommend.js: preview 支持 "#N" 按位置读取');
 }
 
 function patchChatById() {
@@ -209,11 +267,25 @@ function patchChatById() {
 }
 
 function main() {
-  patchList();
-  patchListVirtualization();
-  patchRecommend();
-  patchChatById();
-  console.log('boss-cli 补丁完成：滚动加载、推荐去重、稳定 ID');
+  // 每个补丁独立生效：上游改版导致某一段匹配不上时，不应该阻塞其余补丁。
+  const steps = [
+    ['滚动加载', patchList],
+    ['列表虚拟化', patchListVirtualization],
+    ['推荐去重', patchRecommend],
+    ['预览自动导航', patchPreviewNavigate],
+    ['预览按位置', patchPreviewByIndex],
+    ['稳定 ID', patchChatById],
+  ];
+  const failed = [];
+  for (const [name, fn] of steps) {
+    try { fn(); } catch (e) { failed.push(`${name}：${e.message || e}`); }
+  }
+  if (failed.length) {
+    console.error('以下补丁未应用（上游代码结构可能已变，其余补丁不受影响）：');
+    for (const f of failed) console.error('  - ' + f);
+    process.exitCode = 1;
+  }
+  console.log(`boss-cli 补丁完成：${steps.length - failed.length}/${steps.length} 项生效`);
 }
 
 try {

@@ -62,6 +62,7 @@ function childEnv() {
  * （Node 18.20.2+ 起的修复：不再把 .cmd/.bat 直接交给 CreateProcess），
  * 所以 Windows 走 cmd /c；POSIX 维持原样。
  */
+/** 切命令：要认得引号，否则关键词里有空格会被拆成两个参数 */
 function splitCmd(s) {
   const out = [];
   let cur = '';
@@ -132,17 +133,44 @@ function validate(cmd, task) {
   return { ok: true };
 }
 
-/** 切命令：要认得引号，否则关键词里有空格会被拆成两个参数 */
+/**
+ * 简历文字识别：macOS 用系统 Apple Vision（亚秒级）；其余平台用 RapidOCR（本地、免密钥）。
+ * 两者契约一致：stdout 输出按阅读顺序的文字行，exit 0 表示成功。
+ * RapidOCR 单份约 30 秒，超时给足余量。
+ */
+const OCR_TIMEOUT_MS = 180000;
+
+function pythonOcrCommand(file) {
+  const venvPy = IS_WIN
+    ? path.join(__dirname, '..', '.venv-ocr', 'Scripts', 'python.exe')
+    : path.join(__dirname, '..', '.venv-ocr', 'bin', 'python');
+  const py = fs.existsSync(venvPy) ? venvPy : (IS_WIN ? 'python' : 'python3');
+  return { bin: py, args: [path.join(__dirname, '..', 'bin', 'ocr-resume.py'), file] };
+}
+
 function recognizeResume(file) {
-  return new Promise((resolve) => {
-    const p = spawn('swift', [path.join(__dirname, '..', 'bin', 'ocr-resume.swift'), file], { shell: false });
+  const run = (spec, allowFallback) => new Promise((resolve) => {
+    const p = spawn(spec.bin, spec.args, { shell: false });
     let out = '', err = '';
-    const timer = setTimeout(() => p.kill(), 120000);
+    const timer = setTimeout(() => { try { p.kill(); } catch {} resolve({ ok: false, error: '简历文字识别超时' }); }, OCR_TIMEOUT_MS);
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { err += d; });
-    p.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, error: e.message }); });
-    p.on('close', (code) => { clearTimeout(timer); resolve({ ok: code === 0, text: out.trim(), error: err.trim() }); });
+    p.on('error', (e) => {
+      clearTimeout(timer);
+      // macOS 装了 Xcode Command Line Tools 才有 swift；没有就退回 Python 识别
+      if (allowFallback && e.code === 'ENOENT') return resolve(run(pythonOcrCommand(file), false));
+      resolve({ ok: false, error: e.message });
+    });
+    p.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 3) return resolve({ ok: false, error: err.trim() || '缺少 OCR 依赖，请先运行 workbench/install-ocr' });
+      resolve({ ok: code === 0, text: out.trim(), error: err.trim() });
+    });
   });
+
+  return process.platform === 'darwin'
+    ? run({ bin: 'swift', args: [path.join(__dirname, '..', 'bin', 'ocr-resume.swift'), file] }, true)
+    : run(pythonOcrCommand(file), false);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -260,7 +288,7 @@ const TASKS = {
    */
   'search-pool': {
     label: '搜索池寻源',
-    desc: '按关键词去 BOSS 常规搜索页捞人。只读，不消耗简历额度，也不打招呼。结果存到 runtime/raw/。'
+    desc: '按关键词去 BOSS 常规搜索页捞人。只读，不打招呼。结果存到 runtime/raw/。'
       + '⚠️ 上游 search 无筛选参数（年龄/学历），需按关键词搜后在本地硬规则初筛；'
       + '要按岗位收窄请用「拉取推荐牛人」。搜索结果姓名打码。',
     plan: (ctx) => {
@@ -294,14 +322,14 @@ const TASKS = {
   },
 
   /**
-   * 推荐池寻源：boss recommend（姓名不打码、拉列表免费）
-   * 策略：列表免费 → 本地/人工筛 → 只给最对口的少数人花简历额度（boss preview）
+   * 推荐池寻源：boss recommend（姓名不打码）
+   * 策略：拉列表 → 本地/人工筛 → 只给最对口的少数人看简历（boss preview）
    */
   'recommend-pool': {
     label: '拉取推荐牛人',
-    desc: '跑 boss recommend 拉推荐池列表（姓名不打码，**拉列表免费**）。'
-      + '看完列表再决定给谁看简历 —— VIP 简历不限量，但挑对口的看效率高。'
-      + '⚠️ 给推荐池的人打招呼会消耗平台额度，请先核对当前余额。',
+    desc: '跑 boss recommend 拉推荐池列表（姓名不打码）。'
+      + '看完列表再决定给谁看简历，挑最对口的看效率高。'
+      + '打招呼发出后不可撤回。',
     plan: (ctx) => {
       const job = (ctx.opts && ctx.opts.job) || ctx.targetRole || '';
       return job ? [`boss recommend "${job}"`] : ['boss recommend'];
@@ -330,15 +358,15 @@ const TASKS = {
   },
 
   /**
-   * 给合格候选人打招呼，须经本轮确认。
+   * 给合格候选人打招呼（推荐页常规动作，无需逐条确认，打完逐一回报）。
    * 硬条件（代码强制）：本机配置的最低评级、状态=初筛通过、来源=推荐池。
-   * 理由：池子里的人列表会重排，不立刻打招呼就会丢 —— 打了才进沟通列表，后续免费筛选手段才解锁。
+   * 理由：池子里的人列表会重排，不立刻打招呼就会丢 —— 打了才进沟通列表，后续只读筛选手段才解锁。
    */
   'greet-qualified': {
     label: '给合格候选人打招呼',
     desc: '只对「评级达到本机最低标准、状态=初筛通过、来源=推荐池」的人打招呼；条件在代码里强制。'
-      + '发出的是账号默认话术；消耗平台打招呼额度；不可撤回。'
-      + '打完状态改「已打招呼」，之后就能用 boss chat 免费跟进。',
+      + '发出的是账号默认话术；不可撤回。'
+      + '打完状态改「已打招呼」，之后就能用 boss chat 跟进。',
     plan: (ctx) => greetTargets(ctx).map((t) => `boss greet "${t.name}" --job "${t.role}"`),
     async execute(ctx, logs) {
       const targets = greetTargets(ctx);
@@ -544,7 +572,7 @@ const TASKS = {
   'inbox-resume-role': {
     contextual: true,
     label: '批量查看本岗在线简历',
-    desc: '逐人核对姓名和岗位，只读取当前岗位待处理且尚无简历的人选。打开会话可能使消息变已读，在线简历可能占用平台查看次数。失败者会跳过；不发消息、不改筛选状态。',
+    desc: '逐人核对姓名和岗位，只读取当前岗位待处理且尚无简历的人选。打开会话可能使消息变已读。失败者会跳过；不发消息、不改筛选状态。',
     plan(ctx) {
       return unreadResumeTargets(ctx).flatMap((item) => [chatCommandString(item), 'boss action resume']);
     },
@@ -562,11 +590,11 @@ const TASKS = {
     },
   },
 
-  /** 批量免费硬门槛筛选：对硬门槛为空的人逐个 boss chat（免费，不花简历额度） */
+  /** 批量硬门槛筛选：对硬门槛为空的人逐个 boss chat（不碰对外动作） */
   'screen-hardgate': {
-    label: '批量免费硬门槛筛选',
-    desc: '对台账里「硬门槛」还没填的人，逐个跑 boss chat 免费带出年龄/届别/学历，自动填回台账。'
-      + '**不消耗简历查看额度**。每人约 3 秒。',
+    label: '批量硬门槛筛选',
+    desc: '对台账里「硬门槛」还没填的人，逐个跑 boss chat 带出年龄/届别/学历，自动填回台账。'
+      + '每人约 3 秒。',
     plan: (ctx) => {
       const { header, rows } = ctx.readLedger();
       const iHard = header.indexOf('硬门槛'), iRole = header.indexOf('应聘岗位');

@@ -37,7 +37,25 @@
 | skills 流程（agent 直接执行 boss/lark-cli 命令） | ✅ | ✅ | ✅ |
 | 工作台（Web UI） | ✅ | ✅（`start.bat` 双击启动） | ✅ |
 | 工作台晨报（morning.js） | ✅ | ✅ | 无通知（仅日志） |
-| 在线简历 OCR（工作台内） | ✅（swift） | ⚠️ 无 swift，只存原图人工看 | ⚠️ 同上 |
+| 在线简历 OCR（工作台内） | ✅ Apple Vision（免安装） | ✅ RapidOCR（跑一次 `install-ocr.bat`） | ✅ RapidOCR（跑一次 `install-ocr.sh`） |
+
+**在线简历 OCR**：把简历截图里的文字提出来，供后续初筛使用。三条引擎按平台自动选择：
+
+| 引擎 | 用在哪 | 说明 |
+|---|---|---|
+| Apple Vision | macOS | 系统自带，亚秒级，无需安装 |
+| **RapidOCR** | Windows / Linux（macOS 可作备选） | 开源、本地、免费、免密钥；用的是 PaddleOCR 的中文模型 |
+| 百度 OCR API | 可选 | 需自己配密钥，一般用不上 |
+
+首次使用装一次依赖（约 200MB，走国内镜像）：
+
+```bash
+# Windows：双击 workbench\install-ocr.bat
+# macOS / Linux：
+sh workbench/install-ocr.sh
+```
+
+装在 `workbench/.venv-ocr/`（独立虚拟环境，不污染系统 Python）。没装也能用工作台，只是简历只存原图、不提取文字。单份识别约 30 秒（CPU）。
 
 **Windows 注意**：`boss-cli` 在 Windows 上是 `boss.cmd`，工作台已通过 `cmd /c` 适配；npm 全局目录请确认在 PATH 中（通常 `%APPDATA%\npm`）。BOSS 平台的反检测在 Windows + 无头 Chrome 下的表现**未经实测**，首次使用务必先跑一次 `boss login` + `boss list --unread` 验证（依据：Boss 曾有账号因无头被限 24 小时，见 `skills/recruit-daily/references/channels.md`）。
 
@@ -46,6 +64,18 @@
 正在完善功能：话术库：实现候选人回聊、追聊，要简历——简历入库。
 
 PS：需要接入ai api方可运作工作台，不需要工作台形式可以借助安装了的ai工具一步步执行。
+
+## 开机自启（可选）
+
+工作台是本地 Node 进程，**重启电脑后不会自己起来**，网址打不开是正常现象。想让它登录后自动运行：
+
+```powershell
+双击 workbench\install-autostart.bat
+```
+
+它会往当前用户的「启动」文件夹写一个最小化启动项（不需要管理员权限，只影响当前用户）；注销自启运行 `install-autostart.bat --uninstall`，或 Win+R 输入 `shell:startup` 手动管理。手动方式也一样：把 `start.bat` 的快捷方式拖进 `shell:startup` 打开的文件夹。
+
+注意：自启拉起的是工作台本身；BOSS 登录态（`boss login`）的有效性与是否自启无关，过期了仍需手动扫码。
 
 ## 登录等待
 

@@ -19,7 +19,7 @@ CLI 驱动本机真实浏览器（Chrome/Edge），需要先跑一次 `boss logi
 | 推荐池（**姓名不打码**，按岗位圈定） | `boss recommend <岗位关键字>` |
 | 推荐页逐名打招呼 | `boss greet <姓名> --job <岗位关键字>` |
 | 深度搜索 / 匹配 | `boss deep-search [岗位关键字] [--core <核心要求>] [--bonus <加分项>] [--match]` |
-| 在线简历预览（**耗每日查看额度**，按需） | `boss preview <姓名>` |
+| 在线简历预览（只读） | `boss preview <姓名>` |
 | 打开会话 / 取简历 | `boss chat "<姓名>"` → `boss action resume` |
 | 核对职位与开放状态 | `boss positions` / `boss jd <名称>` |
 
@@ -38,8 +38,10 @@ CLI 驱动本机真实浏览器（Chrome/Edge），需要先跑一次 `boss logi
   循环打太快撞列表刷新会偶发失败，间隔 ≥3s + 失败重试一次即可。
 - **`boss chat` 支持 `--index <序号>`**（按 list 输出的序号开会话）+ `--unread` + `--strict`，可用于已建立联系的候选人。
 - **取简历**：顺序执行、每批 3-5 人；失败加 `--strict` 重试，仍失败标"未获取"，别反复重试烧时间。
-- ⚠️ **对外动作命令，本工作区一律不用**（都不可撤回，需用户逐次授权）：`boss send`（发消息）、
-  `boss action request-attachment-resume`（求简历，会向对方发默认话术）、`boss action not-fit`（点不合适）。
+- ⚠️ **对外动作命令，默认不自己动手**（都不可撤回）：
+  `boss action not-fit`（点不合适）——**永不使用**，只记台账；
+  `boss action request-attachment-resume`（求简历，会向对方发默认话术）——**用户可选开启**；
+  `boss send`（发消息）——需话术库就绪且用户开启代发，**内容只取自话术库，禁止 AI 自生成**。
 
 ## 渠道分工（BOSS 单渠道版）
 
