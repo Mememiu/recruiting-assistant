@@ -36,6 +36,9 @@ function mergeLocalConfig(local) {
   cfg.ai = { ...(cfg.ai || {}), ...(local.ai || {}) };
   cfg.outreach = { ...(cfg.outreach || {}), ...(local.outreach || {}) };
   cfg.push = { ...(cfg.push || {}), ...(local.push || {}) };
+  // dataHome 允许本地覆盖：仓库默认指向仓库根，但每个人的招聘工作区位置不同
+  // （本机在 <仓库父目录>/recruiting）。写在 config.local.json 里，不入库。
+  if (local.dataHome) cfg.dataHome = path.resolve(ROOT, local.dataHome);
   if (cfg.ai && cfg.ai.apiKey) cfg.ai.enabled = true;
 }
 function readLocalConfig() {

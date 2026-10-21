@@ -238,6 +238,11 @@ test('local resume review uses only configured job rules and cites matching evid
   assert.equal(hardgateVerdict({ role: '岗位甲', info: '本科，已毕业', dataHome: root }), '不符');
   assert.equal(hardgateVerdict({ role: '岗位甲', info: '29年应届生，往届生', dataHome: root }), '不符');
   assert.equal(hardgateVerdict({ role: '岗位乙', info: '29年应届生', dataHome: root }), '待核');
+  // 届别回落到教育栏毕业时间：基本信息没写届别时（"1年以内/在职"这类），要看学校栏的毕业年份
+  assert.equal(hardgateVerdict({ role: '岗位甲', info: '21岁｜本科｜1年以内｜在职-月内到岗', resume: '某大学\n2023-2029\n人工智能｜本科', dataHome: root }), '通过');
+  assert.equal(hardgateVerdict({ role: '岗位甲', info: '21岁｜本科｜1年以内｜在职-月内到岗', resume: '某大学\n2021-2025\n人工智能｜本科', dataHome: root }), '不符');
+  assert.equal(hardgateVerdict({ role: '岗位甲', info: '22岁｜本科｜在校-月内到岗', resume: '某大学 机器人工程 2029年毕业', dataHome: root }), '通过');
+  assert.equal(hardgateVerdict({ role: '岗位甲', info: '21岁｜本科｜1年以内｜在职', dataHome: root }), '待核');
   fs.writeFileSync(path.join(root, 'CONTEXT.md'), fs.readFileSync(path.join(root, 'CONTEXT.md'), 'utf8')
     .replace('本科及以上在读', '本科及以上'));
   assert.equal(hardgateVerdict({ role: '岗位甲', info: '本科，已毕业', dataHome: root }), '待核');

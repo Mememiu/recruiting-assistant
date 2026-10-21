@@ -14,11 +14,12 @@ const path = require('path');
 function loadCfg() {
   const root = path.join(__dirname, '..');
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
-  cfg.dataHome = path.resolve(root, cfg.dataHome);
   const lp = path.join(root, 'config.local.json');
-  if (fs.existsSync(lp)) {
-    cfg.ai = { ...(cfg.ai || {}), ...(JSON.parse(fs.readFileSync(lp, 'utf8')).ai || {}) };
-  }
+  const local = fs.existsSync(lp) ? JSON.parse(fs.readFileSync(lp, 'utf8')) : {};
+  cfg.ai = { ...(cfg.ai || {}), ...(local.ai || {}) };
+  // dataHome 允许本地覆盖：仓库默认指向仓库上一级，但每个人的招聘工作区位置不同
+  // （本机在 <仓库父目录>/recruiting）。写在 config.local.json 里，不入库。
+  cfg.dataHome = path.resolve(root, local.dataHome || cfg.dataHome);
   if (cfg.ai && cfg.ai.apiKey) cfg.ai.enabled = true;
   return cfg;
 }
