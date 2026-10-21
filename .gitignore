@@ -23,3 +23,5 @@ node_modules/
 .DS_Store
 *.log
 /.impeccable/review/
+# OCR 依赖（install-ocr 创建的 venv，约 200MB，不入库）
+workbench/.venv-ocr/

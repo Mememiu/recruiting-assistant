@@ -294,13 +294,12 @@ function toText(s) {
   L.push('建议顺序（从最重要往下）：');
   let i = 1;
   for (const a of s.actions.slice(0, 8)) {
-    const cost = a.free ? '' : ' ⚠️会消耗平台额度';
-    L.push(`  ${i++}. [${a.role}] ${a.why}${cost}`);
+    L.push(`  ${i++}. [${a.role}] ${a.why}`);
     L.push(`     说：「${a.say}」`);
   }
   if (s.actions.length > 8) L.push(`  ……还有 ${s.actions.length - 8} 条（出日报等收尾动作）`);
   L.push('');
-  L.push('一句话启动：说「按推荐来」= 从上到下按免费动作先做；或直接说上面任意一句。');
+  L.push('一句话启动：说「按推荐来」= 按上面顺序从上往下做；或直接说上面任意一句。');
   return L.join('\n');
 }
 

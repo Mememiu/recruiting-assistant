@@ -28,7 +28,7 @@ node workbench/doctor.js
 
 只读检查三件事：PATH 里能否找到 boss、工作台的调用方式能否真的跑起来、`boss version` 是否正常响应。任何一步失败都会给出具体原因和修法。**首次在 Windows 上使用、或换了 boss 安装位置后，先跑这个**——它把"工作台调不动 boss"这类问题在 5 秒内定位到是 PATH、spawn 还是登录态。
 
-前端是 `public/` 中的静态文件，服务端仅使用 Node.js 内置模块。macOS 在线简历 OCR 代码在 `bin/ocr-resume.swift`（Windows/Linux 无此依赖，截图照存，只是没有文字识别）。
+前端是 `public/` 中的静态文件，服务端仅使用 Node.js 内置模块。在线简历 OCR 有两条引擎：macOS 用 `bin/ocr-resume.swift`（Apple Vision，免安装、亚秒级）；Windows / Linux 用 `bin/ocr-resume.py`（RapidOCR，开源本地免密钥），依赖装在 `.venv-ocr/`，首次跑一次 `install-ocr.bat` / `install-ocr.sh`。两条引擎契约一致（stdout 输出文字行），runner 按平台自动选。没装 OCR 依赖也能正常工作，只是简历只存原图、不提取文字。
 
 ## AI API 配置
 
