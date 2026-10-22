@@ -43,6 +43,8 @@ const TICKETS = new Map();   // token -> { task, created, used }
 const TICKET_TTL = 5 * 60 * 1000;
 let STATE = { running: false, task: null, current: 0, total: 0, logs: [], done: false, ok: null };
 let batchControl = null;
+/** 支持暂停/取消的批量任务：文本初筛（ai-screen-batch）与多模态复核（vision-review）。 */
+const BATCH_AI_TASKS = ['ai-screen-batch', 'vision-review'];
 
 /** 让子进程一定能找到 boss（~/.local/bin 不一定在当前 PATH 里） */
 function childEnv() {
@@ -108,16 +110,18 @@ function runBoss(args, timeoutMs = 60000) {
 }
 
 function validate(cmd, task) {
+  // 内部 AI 动作（ai: 文本初筛、vision: 多模态复核）：不碰招聘平台，白名单不管它
+  // （它们有自己的记录与确认）。这两类前缀都由代码拼装，不含用户输入。
+  const isInternalAI = String(cmd).startsWith('ai:') || String(cmd).startsWith('vision:');
   try {
-    if (!String(cmd).startsWith('ai:')) {
+    if (!isInternalAI) {
       const parts = splitCmd(cmd);
       for (const part of parts) assertSafeArg(part);
     }
   } catch (e) {
     return { ok: false, why: e.message };
   }
-  // 内部 AI 动作：不碰招聘平台，白名单不管它（它有自己的记录与确认）
-  if (String(cmd).startsWith('ai:')) return { ok: true };
+  if (isInternalAI) return { ok: true };
   // 仅未读沟通与简历任务可调用这个固定的只读截图动作，绝不放开通用 action。
   if (['inbox-chat', 'inbox-resume', 'inbox-resume-role'].includes(task) && cmd === 'boss action resume') return { ok: true };
   const parts = String(cmd).trim().split(/\s+/);
@@ -146,6 +150,18 @@ function pythonOcrCommand(file) {
     : path.join(__dirname, '..', '.venv-ocr', 'bin', 'python');
   const py = fs.existsSync(venvPy) ? venvPy : (IS_WIN ? 'python' : 'python3');
   return { bin: py, args: [path.join(__dirname, '..', 'bin', 'ocr-resume.py'), file] };
+}
+
+/**
+ * 压缩简历截图给视觉模型用：BOSS 的截图是超长 PNG（713x4970），直接 base64 会到 1.5MB，
+ * 多半被接口拒掉或传得很慢。压成 640 宽的 JPEG 再发。
+ */
+function pythonPrepCommand(src, dst) {
+  const venvPy = IS_WIN
+    ? path.join(__dirname, '..', '.venv-ocr', 'Scripts', 'python.exe')
+    : path.join(__dirname, '..', '.venv-ocr', 'bin', 'python');
+  const py = fs.existsSync(venvPy) ? venvPy : (IS_WIN ? 'python' : 'python3');
+  return { bin: py, args: [path.join(__dirname, '..', 'bin', 'prep-image.py'), src, dst] };
 }
 
 function recognizeResume(file) {
@@ -178,7 +194,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ── 任务定义
 
 const report = require('./report');
-const { screen: aiScreen, loadCfg } = require('./ai');
+const { screen: aiScreen, vision: aiVision, loadCfg } = require('./ai');
 const { reviewResume, hardgateVerdict } = require('./resume-review');
 
 function chatArgs(item) {
@@ -240,23 +256,37 @@ function buildSearchCmd(ctx, s) {
   return `boss search "${assertSafeArg(kw, '搜索关键词')}"`;
 }
 
-/** 打招呼候选名单：只按本机配置的评级阈值选已通过的推荐池人选。 */
+/** 本地日期（YYYY-MM-DD）：同一天的判定用用户时区，不用 UTC——凌晨打的招呼不能算成昨天 */
+function localDateStr(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** 打招呼候选名单：只按本机配置的评级阈值选已通过的推荐池人选，且今天已打过的跳过。 */
 function greetTargets(ctx) {
   const minStars = ctx.outreach?.minStars;
   if (!Number.isInteger(minStars) || minStars < 1 || minStars > 3) {
     throw new Error('请先在本地配置打招呼的最低评级（1-3 星）。');
   }
   const { header, rows } = ctx.readLedger();
+  // 缺列时 indexOf = -1 会让同日去重静默失效——宁可报错让人加列，也不能假装保护生效
+  if (header.indexOf('最后打招呼时间') < 0) {
+    throw new Error('台账缺少「最后打招呼时间」列，请在表头补上（见 skills/recruit-daily/references/ledger-and-report.md）再跑。');
+  }
   const iRating = header.indexOf('评级'), iStatus = header.indexOf('状态');
   const iSource = header.indexOf('来源轮次'), iName = header.indexOf('姓名');
   const iRole = header.indexOf('应聘岗位');
+  const iGreet = header.indexOf('最后打招呼时间');
+  const today = localDateStr();
   return rows
     .map((r) => ({
       name: r[iName], role: r[iRole],
       stars: ((r[iRating] || '').match(/⭐/g) || []).length,
       status: r[iStatus], source: r[iSource] || '',
+      greetedAt: String(r[iGreet] || '').trim(),
     }))
-    .filter((t) => t.stars >= minStars && t.status === '初筛通过' && t.source.includes('推荐'));
+    .filter((t) => t.stars >= minStars && t.status === '初筛通过' && t.source.includes('推荐'))
+    .filter((t) => t.greetedAt !== today);   // 同一天内打过的，这天不再打（隔天可再试）
 }
 
 const TASKS = {
@@ -364,14 +394,14 @@ const TASKS = {
    */
   'greet-qualified': {
     label: '给合格候选人打招呼',
-    desc: '只对「评级达到本机最低标准、状态=初筛通过、来源=推荐池」的人打招呼；条件在代码里强制。'
+    desc: '只对「评级达到本机最低标准、状态=初筛通过、来源=推荐池、今天还没打过」的人打招呼；条件在代码里强制。'
       + '发出的是账号默认话术；不可撤回。'
-      + '打完状态改「已打招呼」，之后就能用 boss chat 跟进。',
+      + '每打成功一人立即回写台账（状态改「已打招呼」+ 最后打招呼时间），中途崩了重跑也不会重复打。',
     plan: (ctx) => greetTargets(ctx).map((t) => `boss greet "${t.name}" --job "${t.role}"`),
     async execute(ctx, logs) {
       const targets = greetTargets(ctx);
       if (!targets.length) {
-        logs.push('没有符合本机评级条件的推荐池初筛通过人选。');
+        logs.push('没有符合本机评级条件的推荐池初筛通过人选（今天已打过的也已跳过）。');
         return { ok: true, count: 0 };
       }
       logs.push(`共 ${targets.length} 人，间隔 3 秒，发出账号默认话术`);
@@ -379,6 +409,7 @@ const TASKS = {
       const iName = header.indexOf('姓名'), iStatus = header.indexOf('状态');
       const iRole = header.indexOf('应聘岗位');
       const iUpd = header.indexOf('更新时间');
+      const iGreet = header.indexOf('最后打招呼时间');
       // 台账去重键是「姓名+应聘岗位」：同一人可同时应聘多个岗位，只按姓名定位会更新错行
       const findRow = (t) => rows.find((x) => x[iName] === t.name
         && (iRole < 0 || String(x[iRole] || '').trim() === String(t.role || '').trim()));
@@ -401,7 +432,13 @@ const TASKS = {
           ok++;
           const row = findRow(t);
           if (!row) logs.push(`⚠️ 台账里没定位到「${t.name}（${t.role}）」这一行，状态未改，请手动核对。`);
-          else { row[iStatus] = '已打招呼'; if (iUpd >= 0) row[iUpd] = new Date().toISOString().slice(0, 10); }
+          else {
+            row[iStatus] = '已打招呼';
+            if (iGreet >= 0) row[iGreet] = localDateStr();
+            if (iUpd >= 0) row[iUpd] = localDateStr();
+            // 打招呼不可撤回：每打成功一个立刻落盘，中途崩掉/重跑也不会对同一个人打第二次
+            ctx.writeLedger(header, rows);
+          }
           logs.push(`${t.name}（${t.role}，${t.stars}）：已打招呼`);
         } else {
           fail++;
@@ -409,8 +446,7 @@ const TASKS = {
         }
         await sleep(3000);   // 文档：循环打太快撞列表刷新会偶发失败
       }
-      ctx.writeLedger(header, rows);
-      logs.push(`完成：${ok} 人已打招呼${fail ? `，${fail} 人失败（失败的不改状态，可重跑）` : ''}`);
+      logs.push(`完成：${ok} 人已打招呼${fail ? `，${fail} 人失败（失败的不改状态、不记时间，可重跑）` : ''}`);
       return { ok: fail === 0, count: ok, failed: fail };
     },
   },
@@ -462,17 +498,32 @@ const TASKS = {
         if (batchControl.cancelRequested) break;
         STATE.total = targets.length;
         const name = row[iName];
+        // 命脉技能写在对内笔记（01-jd/_internal/<role>.md）里，是 AI 初筛的一票否决依据，
+        // 必须一起喂给模型——否则第 2 条「命脉是否命中」只能答「无法判断」。
+        const notesPath = path.join(ctx.dataHome, '01-jd', '_internal', (row[iRole] || '') + '.md');
+        const notes = fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8') : '';
+        // 简历正文（机器识别）是命脉证据的主要来源：真机调试、模块联调的具体细节都在里面。
+        // 台账「简历路径」列指向 runtime/resumes/inbox/ 下的 OCR 文本；没有就读不到，只能用免费档案。
+        let resumeText = '';
+        const iResume = header.indexOf('简历路径');
+        const resumePath = iResume >= 0 ? row[iResume] : '';
+        if (resumePath && /\.(txt|md)$/i.test(resumePath) && fs.existsSync(resumePath)) {
+          try { resumeText = fs.readFileSync(resumePath, 'utf8').slice(0, 12000); } catch (e) { /* 路径失效就跳过 */ }
+        }
         const person = [
           `姓名: ${name}`,
           `应聘岗位: ${row[iRole]}`,
           `现职/背景: ${row[iBg]}`,
           `免费档案与聊天记录: ${row[iNote]}`,
+          resumeText
+            ? `\n简历正文（机器识别，可能有错字）:\n${resumeText}`
+            : '\n（无简历正文可读——命脉判断可能只能写「无法判断」）',
         ].join('\n');
         let counted = false;
         try {
           const ctrl = new AbortController();
           batchControl.request = ctrl;
-          const r = await (ctx.screen || aiScreen)({ context, person, signal: ctrl.signal });
+          const r = await (ctx.screen || aiScreen)({ context, notes, person, signal: ctrl.signal });
           batchControl.request = null;
           if (batchControl.cancelRequested || r.cancelled) break;
           done++;
@@ -508,6 +559,128 @@ const TASKS = {
         if (!batchControl.cancelRequested && !batchControl.pauseRequested) await sleep(500);
       }
       logs.push(`${batchControl.cancelRequested ? '已取消' : '完成'}：${saved} 人写入建议${fail ? `，${fail} 人失败` : ''}（状态列未动）`);
+      return { ok: !batchControl.cancelRequested, cancelled: batchControl.cancelRequested, count: saved, failed: fail };
+    },
+  },
+
+  /**
+   * 多模态抽样复核：让视觉模型直接看简历截图，专抓 OCR 引文看不出来的语义风险。
+   *
+   * 与「批量 AI 初筛」分工：
+   *   批量 AI 初筛  判「符不符合标准」——OCR 文本 + 命脉标准，快、便宜、结论可存档可引用。
+   *   多模态复核    判「像不像真的」——参与度伪装、方向漂移、短期贴金、仿真冒充实机。
+   * 抽样跑（默认 20%、单次最多 5 人）：视觉模型慢（实测完整复核约 95 秒/份）且不产出可复用的文字，
+   * 但它能抓到文本引文看不出的那类风险（实测能点出「多处写『参与』」）。
+   * 只写「多模态复核」列，不动状态、不改 AI建议。
+   */
+  'vision-review': {
+    label: '多模态抽样复核',
+    desc: '抽一部分人，让视觉模型直接看简历截图，专抓 OCR 引文看不出的语义风险'
+      + '（参与度伪装、方向漂移、短期贴金、仿真冒充实机）。'
+      + '**只写「多模态复核」列，不动状态、不改 AI建议。**每人约 95 秒、约 7k token。',
+    plan: (ctx) => {
+      const { header, rows } = ctx.readLedger();
+      const iPath = header.indexOf('简历路径'), iRole = header.indexOf('应聘岗位');
+      const n = rows.filter((r) => iPath >= 0 && r[iPath] && /\.(txt|md)$/i.test(r[iPath]) && fs.existsSync(r[iPath])
+        && (!ctx.targetRole || r[iRole] === ctx.targetRole)).length;
+      if (!n) return [];
+      const cfg = loadCfg();
+      const rate = Number(cfg.ai.visionSampleRate) > 0 ? Number(cfg.ai.visionSampleRate) : 0.2;
+      const pick = Math.min(Math.ceil(n / Math.max(1, Math.round(1 / rate))), 5);
+      return [`vision: ${cfg.ai.visionModel || cfg.ai.model} × ${pick} 人（约 ${(pick * 7).toFixed(0)}k token，约 ${pick * 95} 秒）`];
+    },
+    async execute(ctx, logs) {
+      const readLedger = ctx.readLedgerStrict || ctx.readLedger;
+      const { header, rows } = readLedger();
+      const iRole = header.indexOf('应聘岗位'), iName = header.indexOf('姓名');
+      const iPath = header.indexOf('简历路径'), iVision = header.indexOf('多模态复核');
+      const iBg = header.indexOf('现职/背景'), iNote = header.indexOf('备注');
+      if (iVision < 0) throw new Error('台账缺少「多模态复核」列，请在表头补上（见 skills/recruit-daily/references/ledger-and-report.md）再跑。');
+      const cfg = loadCfg();
+      const rate = Number(cfg.ai.visionSampleRate) > 0 ? Number(cfg.ai.visionSampleRate) : 0.2;
+      const every = Math.max(1, Math.round(1 / rate));
+      const candidates = rows.filter((r) => iPath >= 0 && r[iPath] && /\.(txt|md)$/i.test(r[iPath]) && fs.existsSync(r[iPath])
+        && (!ctx.targetRole || r[iRole] === ctx.targetRole));
+      if (!candidates.length) {
+        logs.push('没有带简历正文的人可复核（先跑「读取沟通和在线简历」或批量读简历，让 OCR 文本落盘）');
+        return { ok: true, count: 0 };
+      }
+      const picked = candidates.filter((_, i) => i % every === 0).slice(0, 5);
+      logs.push(`共 ${candidates.length} 人可复核，按 ${Math.round(rate * 100)}% 抽样取 ${picked.length} 人`);
+
+      const system = '你是招聘复核助手，专挑简历里「看着好、其实不对」的信号。'
+        + '每条结论必须引用简历原话；看不到的写「无法判断」，不许猜。输出中文，简短。';
+      let done = 0, fail = 0, saved = 0;
+      for (const row of picked) {
+        if (batchControl.cancelRequested) break;
+        STATE.total = picked.length;
+        const name = row[iName];
+        const txt = row[iPath];
+        const png = txt.replace(/\.(txt|md)$/i, '.png');
+        const jpg = txt.replace(/\.(txt|md)$/i, '.vision.jpg');
+        if (!fs.existsSync(png)) { fail++; logs.push(`${name}：没有对应截图（${path.basename(png)}），跳过`); continue; }
+        try {
+          if (!fs.existsSync(jpg)) {
+            const spec = pythonPrepCommand(png, jpg);
+            const prep = await new Promise((resolve) => {
+              const p = spawn(spec.bin, spec.args, { shell: false });
+              let err = '';
+              const t = setTimeout(() => { try { p.kill(); } catch {} resolve({ ok: false, error: '图片压缩超时' }); }, 60000);
+              p.stderr.on('data', (d) => { err += d; });
+              p.on('error', (e) => { clearTimeout(t); resolve({ ok: false, error: e.message }); });
+              p.on('close', (code) => { clearTimeout(t); resolve({ ok: code === 0, error: err.trim() }); });
+            });
+            if (!prep.ok) { fail++; logs.push(`${name}：图片压缩失败（${prep.error}）`); continue; }
+          }
+          const person = [
+            `姓名: ${name}`,
+            `应聘岗位: ${row[iRole]}`,
+            `现职/背景: ${row[iBg]}`,
+            `聊天/备注: ${row[iNote]}`,
+          ].join('\n');
+          const notesPath = path.join(ctx.dataHome, '01-jd', '_internal', (row[iRole] || '') + '.md');
+          const notes = fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8') : '';
+          const prompt = [
+            '## 岗位标准（判断方向是否一致用）', notes || '（未找到对内笔记）', '',
+            '## 候选人基本信息', person, '',
+            '## 你要回答的（严格 4 条，每条不超过 50 字）',
+            '1. 参与度伪装：是否多处用「参与/协助」却说不出自己具体做了什么？是/否 + 举一处原话',
+            '2. 方向漂移：求职意向与目标岗位实际方向是否一致？是/否 + 说明',
+            '3. 短期贴金：有没有大厂/大赛经历只做了 1-2 个月？是/否 + 举一处',
+            '4. 真机还是仿真：项目跑在真实设备上还是纯仿真？真实/仿真/无法判断 + 一句依据', '',
+            '最后一行输出「结论：值得深聊 / 一般 / 存疑 + 一句话理由」',
+          ].join('\n');
+          const ctrl = new AbortController();
+          batchControl.request = ctrl;
+          const r = await aiVision({ system, prompt, imagePath: jpg, signal: ctrl.signal });
+          batchControl.request = null;
+          if (batchControl.cancelRequested || r.cancelled) break;
+          done++;
+          STATE.current = done;
+          if (!r.ok) { fail++; logs.push(`${name}：调用失败（${r.error}）`); continue; }
+          const brief = String(r.content).replace(/\n+/g, ' ').trim().slice(0, 300);
+          const latest = readLedger();
+          const idCol = latest.header.indexOf('序号');
+          const id = row[header.indexOf('序号')];
+          const matches = latest.rows.filter((item) => item[idCol] === id);
+          if (matches.length !== 1) throw new Error(`台账序号 ${id} 不唯一或已删除，未写入复核结果`);
+          const item = matches[0];
+          const vCol = latest.header.indexOf('多模态复核');
+          if (item[vCol]) { logs.push(`${name}：已复核过，跳过`); continue; }
+          item[vCol] = brief;
+          const updCol = latest.header.indexOf('更新时间');
+          if (updCol >= 0) item[updCol] = localDateStr();
+          ctx.writeLedger(latest.header, latest.rows);
+          saved++;
+          logs.push(`${name}：${brief.slice(0, 100)}…`);
+        } catch (e) {
+          batchControl.request = null;
+          fail++;
+          logs.push(`${name}：异常 ${e.message}`);
+        }
+        await sleep(500);
+      }
+      logs.push(`${batchControl.cancelRequested ? '已取消' : '完成'}：${saved} 人写入复核结果${fail ? `，${fail} 人失败` : ''}（状态与 AI建议未动）`);
       return { ok: !batchControl.cancelRequested, cancelled: batchControl.cancelRequested, count: saved, failed: fail };
     },
   },
@@ -682,10 +855,13 @@ async function run(token, confirm) {
   // 整体替换 TICKETS.set 有把别人的新条目覆盖掉的风险。
   t.used = true;
   const def = TASKS[t.task];
+  // 支持暂停/取消的批量任务：文本初筛与多模态复核共用一套控制通道。
+  // （原来只认 'ai-screen-batch'，别的批量任务一跑就撞上 batchControl 为 null。）
+  const batchAi = BATCH_AI_TASKS.includes(t.task);
   STATE = { running: true, task: t.task, current: 0, total: 0, logs: [], done: false, ok: null,
     paused: false, pauseRequested: false, cancelRequested: false, cancelled: false,
-    controllable: t.task === 'ai-screen-batch' };
-  batchControl = t.task === 'ai-screen-batch' ? { pauseRequested: false, cancelRequested: false, request: null, wake: null } : null;
+    controllable: batchAi };
+  batchControl = batchAi ? { pauseRequested: false, cancelRequested: false, request: null, wake: null } : null;
 
   try {
     const res = await def.execute(t.ctx, STATE.logs);
@@ -704,7 +880,7 @@ async function run(token, confirm) {
 }
 
 function control(action) {
-  if (!batchControl || !STATE.running || STATE.task !== 'ai-screen-batch') return { ok: false, error: '没有正在执行的批量 AI 初筛' };
+  if (!batchControl || !STATE.running || !BATCH_AI_TASKS.includes(STATE.task)) return { ok: false, error: '没有正在执行的批量 AI 任务' };
   if (action === 'pause') {
     if (batchControl.cancelRequested) return { ok: false, error: '任务正在取消' };
     batchControl.pauseRequested = true;

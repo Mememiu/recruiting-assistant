@@ -65,11 +65,11 @@ test('batch AI pause, resume and cancel retain completed advice without starting
 test('greeting threshold comes from local settings and never runs during preview', () => {
   const ctx = {
     readLedger: () => ({
-      header: ['姓名', '应聘岗位', '评级', '状态', '来源轮次'],
+      header: ['姓名', '应聘岗位', '评级', '状态', '来源轮次', '最后打招呼时间'],
       rows: [
-        ['甲', '岗位A', '⭐⭐', '初筛通过', '推荐'],
-        ['乙', '岗位A', '⭐⭐⭐', '初筛通过', '推荐'],
-        ['丙', '岗位B', '⭐⭐⭐', '待初筛', '推荐'],
+        ['甲', '岗位A', '⭐⭐', '初筛通过', '推荐', ''],
+        ['乙', '岗位A', '⭐⭐⭐', '初筛通过', '推荐', ''],
+        ['丙', '岗位B', '⭐⭐⭐', '待初筛', '推荐', ''],
       ],
     }),
   };
@@ -79,4 +79,34 @@ test('greeting threshold comes from local settings and never runs during preview
   ctx.outreach = { minStars: 2 };
   assert.deepEqual(runner.preview('greet-qualified', ctx).commands,
     ['boss greet "甲" --job "岗位A"', 'boss greet "乙" --job "岗位A"']);
+});
+
+test('greeting skips anyone already greeted today and refuses to run without the column', () => {
+  const today = (() => {
+    const d = new Date(), p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  })();
+  const ctx = {
+    outreach: { minStars: 2 },
+    readLedger: () => ({
+      header: ['姓名', '应聘岗位', '评级', '状态', '来源轮次', '最后打招呼时间'],
+      rows: [
+        ['甲', '岗位A', '⭐⭐⭐', '初筛通过', '推荐', today],        // 今天已打过 → 跳过
+        ['乙', '岗位A', '⭐⭐⭐', '初筛通过', '推荐', '2020-01-01'], // 昨天/更早打过 → 可再打
+        ['丙', '岗位A', '⭐⭐⭐', '初筛通过', '推荐', ''],           // 没打过 → 打
+      ],
+    }),
+  };
+  assert.deepEqual(runner.preview('greet-qualified', ctx).commands,
+    ['boss greet "乙" --job "岗位A"', 'boss greet "丙" --job "岗位A"']);
+
+  // 缺「最后打招呼时间」列：直接报错拒跑，不能让同日去重静默失效
+  const noCol = {
+    outreach: { minStars: 2 },
+    readLedger: () => ({
+      header: ['姓名', '应聘岗位', '评级', '状态', '来源轮次'],
+      rows: [['丙', '岗位A', '⭐⭐⭐', '初筛通过', '推荐']],
+    }),
+  };
+  assert.throws(() => runner.preview('greet-qualified', noCol), /最后打招呼时间/);
 });

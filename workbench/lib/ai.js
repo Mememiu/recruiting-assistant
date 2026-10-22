@@ -71,7 +71,19 @@ async function chat(o) {
         ...(ai.reasoningEffort ? { reasoning_effort: ai.reasoningEffort } : {}),
         messages: [
           ...(o.system ? [{ role: 'system', content: o.system }] : []),
-          { role: 'user', content: o.prompt },
+          {
+            role: 'user',
+            // 传了图片就发多模态消息（视觉模型直接看简历截图），否则走纯文本
+            content: o.imageBase64
+              ? [
+                { type: 'text', text: o.prompt },
+                {
+                  type: 'image_url',
+                  image_url: { url: 'data:' + (o.imageMime || 'image/jpeg') + ';base64,' + o.imageBase64 },
+                },
+              ]
+              : o.prompt,
+          },
         ],
         ...(o.jsonMode ? { response_format: { type: 'json_object' } } : {}),
       }),
@@ -113,14 +125,18 @@ async function chat(o) {
  * 整份文件喂进去会多花一倍 token —— 公司背景、术语表、决策记录对判断没用。
  * 找不到对应章节就退回全文，宁可多花也别少给。
  */
-function extractRules(contextMd) {
+function extractRules(contextMd, notesMd) {
   const m = String(contextMd).match(/##\s*三、[\s\S]*?(?=\n##\s*五、)/);
-  return m ? m[0].trim() : String(contextMd);
+  const rules = m ? m[0].trim() : String(contextMd);
+  // 命脉技能写在对内笔记（01-jd/_internal/<role>.md）里，是初筛的一票否决依据。
+  // 必须一起喂给模型——否则"命脉是否命中"只能答「无法判断」。
+  const vital = String(notesMd || '').match(/##\s*命脉技能[\s\S]*?(?=\n##\s)/);
+  return vital ? rules + '\n\n' + vital[0].trim() : rules;
 }
 
 /** 初筛建议：给一个人的材料，要一个带依据的判断 */
-async function screen({ context, person, signal }) {
-  const ctx = extractRules(context);
+async function screen({ context, notes, person, signal }) {
+  const ctx = extractRules(context, notes);
   const system = '你是招聘初筛助手。判断要克制、要讲证据：每条结论都必须引用材料里的原话作依据。'
     + '材料里看不出来的，就写「无法判断」，不许猜。输出中文。';
   const prompt = [
@@ -142,4 +158,63 @@ async function screen({ context, person, signal }) {
   return chat({ system, prompt, signal });
 }
 
-module.exports = { chat, screen, loadCfg };
+/**
+ * 多模态复核：把简历截图直接交给视觉模型，专抓 OCR 引文看不出的语义假信号
+ * （"参与"型、方向漂移、短任期贴金）。
+ * 只作**抽样复核**，不替代 OCR 主流程——文本可缓存、可审计、可被日报引用，
+ * 图片每次都要重传且没有文字可引用。imagePath 建议用压缩后的 JPEG（宽 640 左右）。
+ */
+async function vision({ system, prompt, imagePath, signal }) {
+  const cfg = loadCfg();
+  const ai = cfg.ai || {};
+  if (!ai.apiKey) return { ok: false, error: '还没配 API key（写在 config.local.json）' };
+  if (!imagePath || !fs.existsSync(imagePath)) return { ok: false, error: '截图不存在: ' + imagePath };
+  const ext = /\.png$/i.test(imagePath) ? 'png' : 'jpeg';
+  const b64 = fs.readFileSync(imagePath).toString('base64');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ai.timeoutMs || 180000);
+  const t0 = Date.now();
+  try {
+    const r = await fetch(endpoint(ai.baseUrl), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + ai.apiKey },
+      body: JSON.stringify({
+        model: ai.model,
+        temperature: ai.temperature ?? 0.2,
+        messages: [
+          ...(system ? [{ role: 'system', content: system }] : []),
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: `data:image/${ext};base64,${b64}` } },
+            ],
+          },
+        ],
+      }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const d = await r.json();
+    if (!r.ok || d.error) {
+      return { ok: false, error: (d.error && (d.error.message || JSON.stringify(d.error))) || ('HTTP ' + r.status) };
+    }
+    return {
+      ok: true,
+      content: (d.choices?.[0]?.message?.content) || '',
+      usage: d.usage || {},
+      model: ai.model,
+      ms: Date.now() - t0,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      cancelled: !!signal?.aborted,
+      error: signal?.aborted ? '已取消' : e.name === 'AbortError' ? '调用超时' : String(e.message || e),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+module.exports = { chat, screen, vision, loadCfg };
